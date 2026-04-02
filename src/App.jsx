@@ -352,18 +352,23 @@ function LoginScreen({onLogin}){
       setError("Credenciales incorrectas.");
     }catch{setError("Error de conexión.");}finally{setLoading(false);}
   }
-  return(<div style={{minHeight:"100vh",background:"linear-gradient(135deg,#0066B3,#0097A7)",display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
-    <div style={{background:"#fff",borderRadius:20,padding:40,width:"100%",maxWidth:400,boxShadow:"0 20px 60px rgba(0,0,0,.2)"}}>
+  return(<div style={{minHeight:"100vh",background:"#ffffff",display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+    <div style={{background:"#ffffff",border:"0.5px solid var(--color-border-tertiary)",borderRadius:16,padding:"40px 48px",width:"100%",maxWidth:420,boxShadow:"0 4px 24px rgba(0,0,0,0.07)"}}>
       <div style={{textAlign:"center",marginBottom:32}}>
-        <div style={{width:64,height:64,borderRadius:16,background:"linear-gradient(135deg,#0066B3,#0097A7)",display:"inline-flex",alignItems:"center",justifyContent:"center",marginBottom:12,fontSize:28}}>🔬</div>
-        <div style={{fontSize:22,fontWeight:800}}>SpermAI</div>
-        <div style={{fontSize:12,color:"#94a3b8",fontWeight:500,marginTop:2}}>Ferti IA Suite · Módulo de Semen</div>
+        <div style={{display:"inline-flex",alignItems:"center",gap:10,marginBottom:14}}>
+          <svg width="34" height="34" viewBox="0 0 34 34"><circle cx="17" cy="17" r="17" fill="#0066B3" opacity="0.1"/><circle cx="17" cy="17" r="9" fill="none" stroke="#0066B3" strokeWidth="1.8"/><circle cx="17" cy="17" r="3.5" fill="#0066B3"/></svg>
+          <span style={{fontSize:20,fontWeight:600,color:"var(--color-text-primary)"}}>SpermAI</span>
+        </div>
+        <p style={{fontSize:13,color:"var(--color-text-secondary)",margin:0}}>Ingresá tus credenciales para continuar</p>
       </div>
-      {error&&<div style={{background:"#fef2f2",border:"1px solid #fca5a5",borderRadius:8,padding:"10px 14px",fontSize:13,color:"#dc2626",marginBottom:16,fontWeight:600}}>{error}</div>}
-      <Field label="Usuario" value={username} onChange={setUsername} placeholder="Tu usuario" required/>
-      <Field label="Contraseña" value={password} onChange={setPassword} type="password" placeholder="Tu contraseña" required/>
-      <Btn onClick={go} disabled={loading} fullWidth style={{marginTop:8}}>{loading?"Verificando...":"Ingresar"}</Btn>
-      <p style={{textAlign:"center",fontSize:11,color:"#94a3b8",marginTop:20}}>SpermAI · OMS 2021 (6ª edición)</p>
+      {error&&<div style={{background:"#fef2f2",border:"0.5px solid #fca5a5",borderRadius:8,padding:"10px 14px",fontSize:13,color:"#dc2626",marginBottom:16}}>{error}</div>}
+      <Field label="Usuario" value={username} onChange={setUsername} placeholder="Nombre de usuario" required/>
+      <Field label="Contraseña" value={password} onChange={setPassword} type="password" placeholder="········" required/>
+      <Btn onClick={go} disabled={loading} fullWidth style={{marginTop:16,justifyContent:"center",padding:"12px 16px",fontSize:14}}>{loading?"Verificando...":"Ingresar al sistema"}</Btn>
+      <div style={{textAlign:"center",marginTop:28}}>
+        <p style={{fontSize:12,color:"var(--color-text-secondary)",margin:0}}>SpermAI v1.0</p>
+        <p style={{fontSize:10,color:"var(--color-text-secondary)",margin:"3px 0 0",letterSpacing:"0.08em",textTransform:"uppercase"}}>Medicina y Genética Reproductiva</p>
+      </div>
     </div>
   </div>);
 }
