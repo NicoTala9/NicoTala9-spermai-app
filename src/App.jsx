@@ -1050,6 +1050,9 @@ function PortalTab({user,toast}){
   const[confirmPerm,setConfirmPerm]=useState(null);
   const[platformClinicsData,setPlatformClinicsData]=useState({});
   const[selectedClinic,setSelectedClinic]=useState(null);
+  const[historyPatient,setHistoryPatient]=useState(null);
+  const[historyDetailAnalysis,setHistoryDetailAnalysis]=useState(null);
+  const[detailAnalysis,setDetailAnalysis]=useState(null);
   const[detailAnalysis,setDetailAnalysis]=useState(null);
   const[historyPatient,setHistoryPatient]=useState(null);
   const[historyDetailAnalysis,setHistoryDetailAnalysis]=useState(null);
@@ -1106,8 +1109,10 @@ function PortalTab({user,toast}){
     {!loading&&subTab==="analyses"&&<div>
       {!filtA.length?<Card style={{textAlign:"center",padding:48,color:"#94a3b8"}}><div style={{fontSize:32,marginBottom:8}}>🔬</div><div style={{fontWeight:600}}>No hay análisis registrados</div></Card>
       :filtA.map(a=>{const dc=diagColor(a.diagnosis,a.spermScore),sc=scoreColor(a.spermScore);return(
-        <div key={a.id} onClick={()=>setSelId(selId===a.id?null:a.id)}
-          style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"13px 16px",background:selId===a.id?"#f0f7ff":"#fff",borderRadius:12,marginBottom:8,boxShadow:"0 1px 6px rgba(0,102,179,.06)",cursor:"pointer",border:`2px solid ${selId===a.id?"#0066B3":"transparent"}`,transition:"all .15s",gap:8,flexWrap:"wrap"}}>
+        <div key={a.id} onClick={()=>setDetailAnalysis(a)}
+          style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"13px 16px",background:"#fff",borderRadius:12,marginBottom:8,boxShadow:"0 1px 6px rgba(0,102,179,.06)",cursor:"pointer",border:"1.5px solid var(--color-border-tertiary)",transition:"all .15s",gap:8,flexWrap:"wrap"}}
+          onMouseEnter={e=>e.currentTarget.style.borderColor="#0066B3"}
+          onMouseLeave={e=>e.currentTarget.style.borderColor="var(--color-border-tertiary)"}>
           <div>
             <div style={{fontSize:13,fontWeight:700}}>{a.patientFirstName} {a.patientLastName}{a.sourceFile&&<span style={{background:"#f0fdf4",color:"#22c55e",border:"1px solid #bbf7d0",padding:"1px 7px",borderRadius:10,fontSize:9,fontWeight:700,marginLeft:6}}>📄 IA</span>}</div>
             <div style={{fontSize:11,color:"#94a3b8",marginTop:2}}>{a.procedureDate}{a.doctorName?" · "+a.doctorName:""}</div>
@@ -1120,12 +1125,13 @@ function PortalTab({user,toast}){
       );})}
     </div>}
     {/* Analysis detail modal */}
-    {sel&&<AnalysisDetailModal analysis={sel} cid={cid} onClose={()=>setSelId(null)}/>}
+    {detailAnalysis&&<AnalysisDetailModal analysis={detailAnalysis} cid={cid} onClose={()=>setDetailAnalysis(null)}/>}
+    {historyPatient&&<PatientHistoryModal patient={historyPatient} onClose={()=>{setHistoryPatient(null);setHistoryDetailAnalysis(null);}} onOpenDetail={a=>setHistoryDetailAnalysis(a)}/>}
+    {historyDetailAnalysis&&<AnalysisDetailModal analysis={historyDetailAnalysis} cid={cid} onClose={()=>setHistoryDetailAnalysis(null)}/>}
 
     {/* PACIENTES */}
     {!loading&&subTab==="patients"&&<div>
       {(()=>{
-        // Group by patientId (fallback to firstName+lastName for legacy analyses)
         const grouped={};
         analyses.forEach(a=>{
           const k=a.patientId||`${a.patientFirstName}||${a.patientLastName}`;
@@ -1135,7 +1141,11 @@ function PortalTab({user,toast}){
         const pts=Object.values(grouped).filter(p=>`${p.fn} ${p.ln} ${p.pid||""}`.toLowerCase().includes(q));
         const colors=["#0066B3","#0097A7","#7c3aed","#dc2626","#d97706","#059669"];
         if(!pts.length)return<Card style={{textAlign:"center",padding:48,color:"#94a3b8"}}><div style={{fontSize:32,marginBottom:8}}>👤</div><div style={{fontWeight:600}}>No hay pacientes</div></Card>;
-        return pts.map((p,pi)=><PatientCard key={p.pid||pi} patient={p} color={colors[pi%colors.length]} onSelect={(id)=>{setSubTab("analyses");setSelId(id);}}/>);
+        return(<div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(300px,1fr))",gap:14}}>
+          {pts.map((p,pi)=><PatientCard key={p.pid||pi} patient={p} color={colors[pi%colors.length]}
+            onOpenHistory={()=>{setHistoryPatient(p);setHistoryDetailAnalysis(null);}}
+          />)}
+        </div>);
       })()}
     </div>}
 
@@ -1259,43 +1269,159 @@ function PortalTab({user,toast}){
   </div>);
 }
 
-function PatientCard({patient,color,onSelect}){
-  const[open,setOpen]=useState(false);
+function PatientCard({patient,color,onOpenHistory}){
   const init=(patient.fn[0]||"")+(patient.ln[0]||"");
   const sorted=[...patient.list].sort((a,b)=>b.procedureDate.localeCompare(a.procedureDate));
   const avg=Math.round(patient.list.reduce((s,a)=>s+a.spermScore,0)/patient.list.length);
-  return(<div style={{background:"#fff",borderRadius:14,padding:"18px 20px",marginBottom:12,boxShadow:"0 2px 8px rgba(0,102,179,.06)",border:"1px solid #e2e8f0"}}>
-    <div style={{display:"flex",alignItems:"center",gap:12,justifyContent:"space-between",flexWrap:"wrap"}}>
-      <div style={{display:"flex",alignItems:"center",gap:12}}>
-        <div style={{width:44,height:44,borderRadius:"50%",background:color+"18",color,display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,fontWeight:800,flexShrink:0}}>{init}</div>
-        <div>
-          <div style={{fontSize:14,fontWeight:800}}>{patient.ln}, {patient.fn}</div>
-          <div style={{fontSize:11,color:"#94a3b8",marginTop:2}}>
-            {patient.pid&&<span style={{background:"#f0f4f8",padding:"1px 7px",borderRadius:8,fontFamily:"monospace",marginRight:6}}>ID: {patient.pid}</span>}
-            {patient.doctor||""}
-          </div>
+  return(<div style={{...s.card,display:"flex",flexDirection:"column",gap:0}}>
+    <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:14}}>
+      <div style={{width:46,height:46,borderRadius:"50%",background:color+"18",color,display:"flex",alignItems:"center",justifyContent:"center",fontSize:15,fontWeight:700,flexShrink:0,letterSpacing:-1}}>{init}</div>
+      <div style={{flex:1,minWidth:0}}>
+        <div style={{fontSize:14,fontWeight:600,color:"var(--color-text-primary)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{patient.ln}, {patient.fn}</div>
+        <div style={{fontSize:11,color:"var(--color-text-secondary)",marginTop:2,display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
+          {patient.pid&&<code style={{background:"var(--color-background-secondary)",padding:"1px 6px",borderRadius:4,fontSize:10}}>ID: {patient.pid}</code>}
+          {patient.doctor&&<span>{patient.doctor}</span>}
         </div>
       </div>
-      <button onClick={()=>setOpen(!open)} style={{background:"#f0f4f8",border:"none",borderRadius:8,padding:"7px 14px",fontSize:11,fontWeight:700,color:"#0066B3",cursor:"pointer"}}>{open?"Cerrar ↑":"Ver historial →"}</button>
     </div>
-    <div className="patient-meta" style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(100px,1fr))",gap:10,margin:"12px 0"}}>
-      {[["Análisis",patient.list.length,"#0066B3"],["Score prom.",avg,scoreColor(avg)],["Último",sorted[0].procedureDate,"#1a2332"]].map(([l,v,c])=>(
-        <div key={l} style={{background:"#f0f4f8",borderRadius:8,padding:"8px 12px",textAlign:"center"}}>
-          <div style={{fontSize:18,fontWeight:800,color:c,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{v}</div>
-          <div style={{fontSize:10,color:"#94a3b8",fontWeight:600,marginTop:1}}>{l}</div>
+    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:14}}>
+      {[["Análisis",patient.list.length,"#0066B3"],["Score prom.",avg,scoreColor(avg)]].map(([l,v,c])=>(
+        <div key={l} style={{background:"var(--color-background-secondary)",borderRadius:8,padding:"10px 12px",textAlign:"center"}}>
+          <div style={{fontSize:20,fontWeight:700,color:c}}>{v}</div>
+          <div style={{fontSize:10,color:"var(--color-text-secondary)",fontWeight:500,marginTop:2}}>{l}</div>
         </div>
       ))}
     </div>
-    {open&&sorted.map(a=>{const dc=diagColor(a.diagnosis,a.spermScore),sc=scoreColor(a.spermScore);return(
-      <div key={a.id} className="history-row" onClick={()=>onSelect(a.id)}
-        style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 12px",borderRadius:8,background:"#f8faff",marginBottom:6,flexWrap:"wrap",gap:6,cursor:"pointer"}}>
-        <div><div style={{fontSize:12,fontWeight:700}}>{a.procedureDate}</div><div style={{fontSize:10,color:"#94a3b8",marginTop:1}}>{a.doctorName||""}</div></div>
-        <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
-          <Badge label={a.diagnosis} color={dc}/><Badge label={`Score: ${a.spermScore}`} color={sc}/>
-          {a.sourceFile&&<span style={{fontSize:9,background:"#f0fdf4",color:"#22c55e",padding:"1px 6px",borderRadius:8,fontWeight:700}}>📄 IA</span>}
+    <div style={{fontSize:11,color:"var(--color-text-secondary)",marginBottom:12}}>Último: {sorted[0].procedureDate} · <Badge label={sorted[0].diagnosis} color={diagColor(sorted[0].diagnosis,sorted[0].spermScore)}/></div>
+    <button onClick={onOpenHistory} style={{...s.btnP,width:"100%",justifyContent:"center",fontSize:12}}>Ver historial de análisis →</button>
+  </div>);
+}
+
+// ─── ANALYSIS DETAIL MODAL ───────────────────────────────────────────────────
+function AnalysisDetailModal({analysis:a,cid,onClose}){
+  const dc=diagColor(a.diagnosis,a.spermScore),sc=scoreColor(a.spermScore);
+  const abstDays=a.abstinenceDays?parseInt(a.abstinenceDays):null;
+  const abstWarn=abstDays!==null&&(abstDays<2||abstDays>7);
+  return(<div onClick={e=>{if(e.target===e.currentTarget)onClose();}} style={{position:"fixed",inset:0,zIndex:10000,background:"rgba(15,23,42,0.55)",display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+    <div style={{background:"#fff",borderRadius:20,width:"100%",maxWidth:680,maxHeight:"92vh",overflowY:"auto",boxShadow:"0 24px 64px rgba(0,0,0,.2)"}}>
+      {/* Header */}
+      <div style={{padding:"18px 24px",borderBottom:"0.5px solid var(--color-border-tertiary)",display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:12}}>
+        <div>
+          <div style={{fontSize:16,fontWeight:600,color:"var(--color-text-primary)"}}>{a.patientFirstName} {a.patientLastName}</div>
+          <div style={{fontSize:12,color:"var(--color-text-secondary)",marginTop:3,display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
+            {a.patientId&&<code style={{background:"var(--color-background-secondary)",padding:"1px 6px",borderRadius:4,fontSize:10}}>ID: {a.patientId}</code>}
+            <span>{a.procedureDate}</span>
+            {a.doctorName&&<span>· {a.doctorName}</span>}
+            {abstDays!==null&&<span style={{color:abstWarn?"#f59e0b":"var(--color-text-secondary)"}}>· {abstDays}d abstinencia{abstWarn?" ⚠":"✓"}</span>}
+            {a.sourceFile&&<span style={{background:"#f0fdf4",color:"#22c55e",padding:"1px 7px",borderRadius:6,fontSize:10,fontWeight:600}}>📄 IA</span>}
+          </div>
+        </div>
+        <div style={{display:"flex",gap:8,flexShrink:0}}>
+          <button style={{...s.btnP,fontSize:12,padding:"7px 14px"}} onClick={()=>downloadPDF({...a,recommendations:a.recommendations||[]},cid)}>⬇ PDF</button>
+          <button style={{...s.btn,padding:"7px 12px",fontSize:18,lineHeight:1}} onClick={onClose}>×</button>
         </div>
       </div>
-    );})}
+      <div style={{padding:"20px 24px",display:"flex",flexDirection:"column",gap:16}}>
+        {abstWarn&&<div style={{padding:"8px 12px",background:"#fffbeb",borderRadius:8,fontSize:11,color:"#92400e"}}>⚠ Días de abstinencia fuera del rango recomendado (2-7 días). Puede afectar concentración y volumen.</div>}
+
+        {/* Score + diagnosis */}
+        <div style={{display:"flex",gap:20,alignItems:"center",flexWrap:"wrap"}}>
+          <Gauge score={a.spermScore} size={100}/>
+          <div style={{flex:1,minWidth:160}}>
+            <div style={{marginBottom:8}}><Badge label={a.diagnosis} color={dc}/></div>
+            <div style={{fontSize:11,color:"var(--color-text-secondary)",lineHeight:1.7}}>{a.aiNotes}</div>
+          </div>
+        </div>
+
+        {/* Params table */}
+        <div style={{border:"0.5px solid var(--color-border-tertiary)",borderRadius:12,overflow:"hidden"}}>
+          <div style={{padding:"12px 16px",background:"var(--color-background-secondary)",fontSize:12,fontWeight:600,color:"var(--color-text-secondary)",textTransform:"uppercase",letterSpacing:"0.05em"}}>Parámetros OMS 2021</div>
+          {[
+            {label:"Concentración",v:a.params?.concentration,unit:"mill/mL",ref:"≥16",ok:(a.params?.concentration||0)>=16},
+            {label:"Motilidad Progresiva (PR)",v:a.params?.progressiveMotility,unit:"%",ref:"≥30%",ok:(a.params?.progressiveMotility||0)>=30},
+            {label:"Motilidad Total (PR+NP)",v:a.params?.totalMotility,unit:"%",ref:"≥42%",ok:(a.params?.totalMotility||0)>=42},
+            {label:"Morfología Kruger",v:a.params?.morphology,unit:"%",ref:"≥4%",ok:(a.params?.morphology||0)>=4},
+            {label:"Vitalidad",v:a.params?.vitality,unit:"%",ref:"≥54%",ok:(a.params?.vitality||0)>=54},
+            {label:"Volumen",v:a.params?.volume,unit:"mL",ref:"≥1.4 mL",ok:(a.params?.volume||0)>=1.4},
+            ...((a.params?.dfi||0)>0?[{label:"DFI · Fragmentación ADN",v:a.params?.dfi,unit:"%",ref:"≤25%",ok:(a.params?.dfi||0)<=25}]:[]),
+          ].map((row,i,arr)=>(
+            <div key={row.label} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"11px 16px",borderTop:"0.5px solid var(--color-border-tertiary)",background:"#fff"}}>
+              <span style={{fontSize:13,color:"var(--color-text-primary)"}}>{row.label}</span>
+              <div style={{display:"flex",alignItems:"center",gap:12}}>
+                <span style={{fontSize:11,color:"var(--color-text-secondary)"}}>{row.ref}</span>
+                <span style={{fontSize:14,fontWeight:700,color:row.ok?"#22c55e":"#ef4444",minWidth:60,textAlign:"right"}}>{row.v} {row.unit}</span>
+                <span style={{fontSize:14}}>{row.ok?"✅":"❌"}</span>
+              </div>
+            </div>
+          ))}
+          <div style={{padding:"10px 16px",background:"var(--color-background-secondary)",borderTop:"0.5px solid var(--color-border-tertiary)",display:"flex",gap:20,flexWrap:"wrap"}}>
+            <span style={{fontSize:11,color:"var(--color-text-secondary)"}}>Prog. totales: <strong style={{color:"#0066B3"}}>{((a.params?.concentration||0)*((a.params?.progressiveMotility||0)/100)).toFixed(1)} mill</strong></span>
+            <span style={{fontSize:11,color:"var(--color-text-secondary)"}}>Totales: <strong style={{color:"#0066B3"}}>{((a.params?.concentration||0)*(a.params?.volume||0)).toFixed(1)} mill</strong></span>
+          </div>
+        </div>
+
+        {/* Techniques */}
+        {(a.techniques||[]).length>0&&<div>
+          <div style={{fontSize:12,fontWeight:600,color:"var(--color-text-secondary)",textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:8}}>Técnicas recomendadas</div>
+          <div style={{display:"flex",flexDirection:"column",gap:6}}>
+            {(a.techniques||[]).map(t=>(
+              <div key={t.id} style={{display:"flex",gap:12,padding:"10px 14px",background:t.color+"0d",borderLeft:`3px solid ${t.color}`,borderRadius:8,alignItems:"flex-start"}}>
+                <span style={{fontSize:16,flexShrink:0}}>{t.icon}</span>
+                <div><div style={{fontSize:12,fontWeight:600,color:t.color,marginBottom:2}}>{t.label}</div><div style={{fontSize:11,color:"var(--color-text-secondary)",lineHeight:1.6}}>{t.desc}</div></div>
+              </div>
+            ))}
+          </div>
+        </div>}
+
+        {/* Clinical recs */}
+        {(a.recommendations||[]).length>0&&<div>
+          <div style={{fontSize:12,fontWeight:600,color:"var(--color-text-secondary)",textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:8}}>Observaciones clínicas</div>
+          {(a.recommendations||[]).map((r,i)=>(<div key={i} style={{display:"flex",gap:8,padding:"8px 0",borderBottom:i<(a.recommendations.length-1)?"0.5px solid var(--color-border-tertiary)":"none",fontSize:12,lineHeight:1.6,color:"var(--color-text-secondary)"}}>
+            <span style={{color:"#0066B3",flexShrink:0}}>→</span>{r}
+          </div>))}
+        </div>}
+      </div>
+    </div>
+  </div>);
+}
+
+// ─── PATIENT HISTORY MODAL ────────────────────────────────────────────────────
+function PatientHistoryModal({patient,onClose,onOpenDetail}){
+  const sorted=[...patient.list].sort((a,b)=>b.procedureDate.localeCompare(a.procedureDate));
+  const avg=Math.round(patient.list.reduce((s,a)=>s+a.spermScore,0)/patient.list.length);
+  return(<div onClick={e=>{if(e.target===e.currentTarget)onClose();}} style={{position:"fixed",inset:0,zIndex:10000,background:"rgba(15,23,42,0.55)",display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+    <div style={{background:"#fff",borderRadius:20,width:"100%",maxWidth:620,maxHeight:"92vh",overflowY:"auto",boxShadow:"0 24px 64px rgba(0,0,0,.2)"}}>
+      <div style={{padding:"18px 24px",borderBottom:"0.5px solid var(--color-border-tertiary)",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+        <div>
+          <div style={{fontSize:16,fontWeight:600}}>{patient.ln}, {patient.fn}</div>
+          <div style={{fontSize:12,color:"var(--color-text-secondary)",marginTop:3,display:"flex",gap:8,alignItems:"center"}}>
+            {patient.pid&&<code style={{background:"var(--color-background-secondary)",padding:"1px 6px",borderRadius:4,fontSize:10}}>ID: {patient.pid}</code>}
+            <span>{patient.list.length} análisis · Score prom. <strong style={{color:scoreColor(avg)}}>{avg}</strong></span>
+          </div>
+        </div>
+        <button style={{...s.btn,padding:"7px 12px",fontSize:18,lineHeight:1}} onClick={onClose}>×</button>
+      </div>
+      <div style={{padding:"20px 24px",display:"flex",flexDirection:"column",gap:8}}>
+        {sorted.map(a=>{
+          const dc=diagColor(a.diagnosis,a.spermScore),sc=scoreColor(a.spermScore);
+          return(<div key={a.id} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"12px 16px",border:"0.5px solid var(--color-border-tertiary)",borderRadius:12,background:"var(--color-background-primary)",gap:8,flexWrap:"wrap"}}>
+            <div>
+              <div style={{fontSize:13,fontWeight:600}}>{a.procedureDate}</div>
+              <div style={{fontSize:11,color:"var(--color-text-secondary)",marginTop:2,display:"flex",gap:6,flexWrap:"wrap"}}>
+                {a.doctorName&&<span>{a.doctorName}</span>}
+                {a.abstinenceDays&&<span>· {a.abstinenceDays}d abstinencia</span>}
+                {a.sourceFile&&<span style={{color:"#22c55e",fontWeight:600}}>· 📄 IA</span>}
+              </div>
+            </div>
+            <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+              <Badge label={a.diagnosis} color={dc}/>
+              <span style={{fontSize:14,fontWeight:700,color:sc}}>{a.spermScore}</span>
+              <button style={{...s.btnP,fontSize:11,padding:"5px 12px"}} onClick={()=>onOpenDetail(a)}>Ver detalle →</button>
+            </div>
+          </div>);
+        })}
+      </div>
+    </div>
   </div>);
 }
 
