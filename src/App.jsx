@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 
 // ─── FONTS & GLOBAL STYLES (OocyteAI aesthetic) ──────────────────────────────
 const _gs = document.createElement("style");
@@ -155,6 +155,11 @@ async function getPlatformClinics() {
   try { const d=await getDB(); if(!d)throw 0; const s=await d.collection("platformClinics").get(); return s.docs.map(x=>({...x.data(),id:x.id})); }
   catch { return JSON.parse(localStorage.getItem("platformClinics")||"[]"); }
 }
+async function getPlatformClinicsMap() {
+  const arr=await getPlatformClinics();
+  const map={};(Array.isArray(arr)?arr:Object.values(arr)).forEach(c=>{map[c.id]=c;});
+  return map;
+}
 async function savePlatformClinic(c) {
   try { const d=await getDB(); if(!d)throw 0; const col=d.collection("platformClinics"); const ref=c.id?col.doc(c.id):col.doc(); await ref.set({...c,id:ref.id},{merge:true}); return{...c,id:ref.id}; }
   catch { const arr=JSON.parse(localStorage.getItem("platformClinics")||"[]"); const item={...c,id:c.id||`clinic_${Date.now()}`}; const i=arr.findIndex(x=>x.id===item.id); if(i>=0)arr[i]=item; else arr.push(item); localStorage.setItem("platformClinics",JSON.stringify(arr)); return item; }
@@ -221,11 +226,20 @@ function ParamBars({params}){
   });
 }
 
-function downloadPDF(a){
+async function downloadPDF(a, clinicId){
   const dc=diagColor(a.diagnosis,a.spermScore),sc=scoreColor(a.spermScore);
+  // Load clinic data
+  let clinicName="CEGYR", clinicLogo=null;
+  try{
+    const clinics=await getPlatformClinics();
+    const cid=clinicId||a.clinicId||CLINIC_ID;
+    const cData=clinics.find(c=>c.id===cid);
+    if(cData){clinicName=cData.name||clinicName;clinicLogo=cData.logoBase64||null;}
+  }catch{}
+  const logoHtml=clinicLogo?`<img src="${clinicLogo}" style="height:44px;width:44px;object-fit:contain;border-radius:6px;" />`:`<div style="width:44px;height:44px;background:#0066B310;border-radius:6px;display:inline-flex;align-items:center;justify-content:center;font-size:22px;">🔬</div>`;
   const html=`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>SpermAI · ${a.patientFirstName} ${a.patientLastName}</title>
-  <style>body{font-family:Arial,sans-serif;padding:30px;color:#1a2332;max-width:700px;margin:0 auto;}h1{color:#0066B3;font-size:20px;margin-bottom:4px;}.sub{color:#94a3b8;font-size:12px;margin-bottom:20px;}.badge{display:inline-block;padding:4px 14px;border-radius:20px;font-size:13px;font-weight:700;background:${dc}18;color:${dc};border:1px solid ${dc}40;}.score{font-size:28px;font-weight:800;color:${sc};}table{width:100%;border-collapse:collapse;margin:16px 0;}td{padding:8px 12px;border-bottom:1px solid #e2e8f0;font-size:13px;}td:first-child{color:#64748b;}.ok{color:#22c55e;font-weight:700;}.bad{color:#ef4444;font-weight:700;}.rec{padding:8px 12px;background:#f0f4f8;border-radius:6px;margin-bottom:6px;font-size:12px;}.footer{margin-top:30px;font-size:10px;color:#94a3b8;border-top:1px solid #e2e8f0;padding-top:12px;}@media print{body{padding:20px;}}</style></head><body>
-  <h1>SpermAI · Informe de Espermograma</h1><div class="sub">Ferti IA Suite · OMS 2021 (6ª edición)</div>
+  <style>body{font-family:Arial,sans-serif;padding:30px;color:#1a2332;max-width:700px;margin:0 auto;}.header{display:flex;align-items:center;gap:14px;padding-bottom:16px;border-bottom:2px solid #0066B3;margin-bottom:20px;}.clinic-name{font-size:18px;font-weight:700;color:#0066B3;}.clinic-sub{font-size:11px;color:#94a3b8;}.badge{display:inline-block;padding:4px 14px;border-radius:20px;font-size:13px;font-weight:700;background:${dc}18;color:${dc};border:1px solid ${dc}40;}.score{font-size:28px;font-weight:800;color:${sc};}table{width:100%;border-collapse:collapse;margin:16px 0;}td{padding:8px 12px;border-bottom:1px solid #e2e8f0;font-size:13px;}td:first-child{color:#64748b;}.ok{color:#22c55e;font-weight:700;}.bad{color:#ef4444;font-weight:700;}.rec{padding:8px 12px;background:#f0f4f8;border-radius:6px;margin-bottom:6px;font-size:12px;}.footer{margin-top:30px;font-size:10px;color:#94a3b8;border-top:1px solid #e2e8f0;padding-top:12px;}@media print{body{padding:20px;}}</style></head><body>
+  <div class="header">${logoHtml}<div><div class="clinic-name">SpermAI | ${clinicName}</div><div class="clinic-sub">Ferti IA Suite · OMS 2021 (6ª edición)</div></div></div>
   <p><strong>Paciente:</strong> ${a.patientFirstName} ${a.patientLastName}</p>
   <p><strong>Fecha:</strong> ${a.procedureDate}${a.doctorName?` &nbsp;·&nbsp; <strong>Médico:</strong> ${a.doctorName}`:""}</p>
   <p style="margin-top:12px"><strong>Diagnóstico:</strong> &nbsp;<span class="badge">${a.diagnosis}</span> &nbsp; <span class="score">${a.spermScore}</span> <span style="font-size:12px;color:#94a3b8">/ 100 SpermScore</span></p>
@@ -241,9 +255,22 @@ function downloadPDF(a){
   </table>
   <strong style="font-size:13px">Recomendaciones:</strong>
   ${(a.recommendations||[]).map(r=>`<div class="rec">→ ${r}</div>`).join("")}
-  <div class="footer">SpermAI · Ferti IA Suite · El diagnóstico final es responsabilidad del especialista certificado. · ${new Date().toLocaleDateString("es-AR")}</div>
+  <div class="footer">SpermAI · ${clinicName} · El diagnóstico final es responsabilidad del especialista certificado. · ${new Date().toLocaleDateString("es-AR")}</div>
   </body></html>`;
   const w=window.open("","_blank");w.document.write(html);w.document.close();w.focus();setTimeout(()=>w.print(),500);
+}
+
+// ─── IMAGE COMPRESS ──────────────────────────────────────────────────────────
+function compress(file, maxPx=400, quality=0.85){
+  return new Promise(res=>{
+    const img=new Image();const url=URL.createObjectURL(file);
+    img.onload=()=>{
+      const scale=Math.min(1,maxPx/Math.max(img.width,img.height));
+      const c=document.createElement("canvas");c.width=img.width*scale;c.height=img.height*scale;
+      c.getContext("2d").drawImage(img,0,0,c.width,c.height);
+      URL.revokeObjectURL(url);res(c.toDataURL("image/jpeg",quality));
+    };img.src=url;
+  });
 }
 
 // ─── HOOKS ───────────────────────────────────────────────────────────────────
@@ -573,6 +600,7 @@ function StepResult({result,patient,sourceFile,onSave,onNew,saving,saved}){
 // ─── PORTAL TAB ───────────────────────────────────────────────────────────────
 function PortalTab({user,toast}){
   const cid=user.clinicId||CLINIC_ID;
+  const isMaster=user.role==="masterAdmin";
   const[subTab,setSubTab]=useState("analyses");
   const[analyses,setAnalyses]=useState([]);
   const[deleted,setDeleted]=useState([]);
@@ -581,8 +609,22 @@ function PortalTab({user,toast}){
   const[selId,setSelId]=useState(null);
   const[confirmDel,setConfirmDel]=useState(null);
   const[confirmPerm,setConfirmPerm]=useState(null);
+  const[platformClinicsData,setPlatformClinicsData]=useState({});
+  const[selectedClinic,setSelectedClinic]=useState(null);
 
-  useEffect(()=>{(async()=>{setLoading(true);const[a,d]=await Promise.all([getAnalyses(cid),getDeletedAnalyses(cid)]);setAnalyses(a);setDeleted(d);setLoading(false);})();},[cid]);
+  useEffect(()=>{
+    setSelectedClinic(null);
+  },[subTab]);
+
+  useEffect(()=>{(async()=>{
+    setLoading(true);
+    const[a,d]=await Promise.all([getAnalyses(cid),getDeletedAnalyses(cid)]);
+    setAnalyses(a);setDeleted(d);
+    if(isMaster){
+      try{const cls=await getPlatformClinics();const map={};cls.forEach(c=>{map[c.id]=c;});setPlatformClinicsData(map);}catch{}
+    }
+    setLoading(false);
+  })();},[cid]);
 
   const sel=analyses.find(a=>a.id===selId);
   const q=search.toLowerCase();
@@ -606,13 +648,13 @@ function PortalTab({user,toast}){
 
     {/* Sub-nav */}
     <div className="portal-search-row" style={{display:"flex",alignItems:"center",borderBottom:"2px solid #e2e8f0",marginBottom:20,gap:0,flexWrap:"wrap"}}>
-      {[["analyses","Análisis"],["patients","Pacientes"],["deleted","🗑 Eliminados"]].map(([id,lbl])=>(
-        <button key={id} onClick={()=>setSubTab(id)} style={{padding:"10px 18px",background:"none",border:"none",borderBottom:`3px solid ${subTab===id?(id==="deleted"?"#ef4444":"#0066B3"):"transparent"}`,fontFamily:"Montserrat,sans-serif",fontSize:12,fontWeight:600,cursor:"pointer",color:subTab===id?(id==="deleted"?"#ef4444":"#0066B3"):"#64748b",marginBottom:-2,whiteSpace:"nowrap"}}>{lbl}</button>
+      {[["analyses","Análisis"],["patients","Pacientes"],["deleted","🗑 Eliminados"],...(isMaster?[["clinics","🏥 Clínicas"]]:[])].map(([id,lbl])=>(
+        <button key={id} onClick={()=>setSubTab(id)} style={{padding:"10px 18px",background:"none",border:"none",borderBottom:`3px solid ${subTab===id?(id==="deleted"?"#ef4444":id==="clinics"?"#0097A7":"#0066B3"):"transparent"}`,fontFamily:"Montserrat,sans-serif",fontSize:12,fontWeight:600,cursor:"pointer",color:subTab===id?(id==="deleted"?"#ef4444":id==="clinics"?"#0097A7":"#0066B3"):"#64748b",marginBottom:-2,whiteSpace:"nowrap"}}>{lbl}</button>
       ))}
-      <div style={{flex:1,display:"flex",justifyContent:"flex-end",alignItems:"center",padding:"6px 0"}}>
+      {subTab!=="clinics"&&<div style={{flex:1,display:"flex",justifyContent:"flex-end",alignItems:"center",padding:"6px 0"}}>
         <input className="sub-search" value={search} onChange={e=>setSearch(e.target.value)} placeholder="Buscar..."
           style={{padding:"7px 12px",border:"1.5px solid #d1dbe6",borderRadius:8,fontFamily:"Montserrat,sans-serif",fontSize:12,color:"#1a2332",background:"#fff",outline:"none",width:180}}/>
-      </div>
+      </div>}
     </div>
 
     {loading&&<div style={{textAlign:"center",padding:48,color:"#94a3b8"}}>Cargando...</div>}
@@ -637,7 +679,7 @@ function PortalTab({user,toast}){
         <div className="preview-header" style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:16,flexWrap:"wrap",gap:8}}>
           <div><div style={{fontSize:15,fontWeight:800}}>{sel.patientFirstName} {sel.patientLastName}</div><div style={{fontSize:11,color:"#94a3b8",marginTop:2}}>{sel.procedureDate}{sel.doctorName?" · "+sel.doctorName:""}{sel.sourceFile?" · 📄 "+sel.sourceFile:""}</div></div>
           <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-            <Btn size="sm" onClick={()=>downloadPDF({...sel,recommendations:sel.recommendations||[]})}>⬇ Descargar PDF</Btn>
+            <Btn size="sm" onClick={()=>downloadPDF({...sel,recommendations:sel.recommendations||[]},cid)}>⬇ Descargar PDF</Btn>
             <Btn size="sm" variant="secondary" onClick={()=>setSelId(null)}>✕ Cerrar</Btn>
           </div>
         </div>
@@ -685,6 +727,99 @@ function PortalTab({user,toast}){
         </div>);
       })}
     </div>}
+
+    {/* CLÍNICAS (Master Admin only) */}
+    {!loading&&subTab==="clinics"&&isMaster&&(()=>{
+      // Build per-clinic summaries
+      const allCids=[CLINIC_ID,...Object.keys(platformClinicsData)];
+      const clinicMap={};
+      allCids.forEach(id=>{
+        const info=platformClinicsData[id]||{};
+        const cAnalyses=analyses.filter(a=>(a.clinicId||CLINIC_ID)===id);
+        const patients=new Set(cAnalyses.map(a=>`${a.patientFirstName}||${a.patientLastName}`)).size;
+        clinicMap[id]={id,name:id===CLINIC_ID?"CEGYR":(info.name||id),location:info.location||"",logoBase64:info.logoBase64||null,analyses:cAnalyses,patients};
+      });
+      const clinicList=Object.values(clinicMap).filter(c=>c.analyses.length>0||c.id===CLINIC_ID);
+
+      if(selectedClinic){
+        const sc=clinicList.find(c=>c.id===selectedClinic.id)||selectedClinic;
+        const scAnalyses=sc.analyses.filter(a=>`${a.patientFirstName} ${a.patientLastName} ${a.diagnosis}`.toLowerCase().includes(search.toLowerCase()));
+        return(<div>
+          {/* Header drill-down */}
+          <div style={{display:"flex",alignItems:"center",gap:14,marginBottom:20,padding:"14px 18px",background:"#fff",borderRadius:12,border:"0.5px solid var(--color-border-tertiary)"}}>
+            <button onClick={()=>setSelectedClinic(null)} style={{...s.btn,fontSize:12,padding:"6px 12px",flexShrink:0}}>← Clínicas</button>
+            {sc.logoBase64
+              ?<img src={sc.logoBase64} style={{width:44,height:44,borderRadius:8,objectFit:"contain",flexShrink:0}} alt="logo"/>
+              :<div style={{width:44,height:44,borderRadius:8,background:"#f0f4f8",display:"flex",alignItems:"center",justifyContent:"center",fontSize:22,flexShrink:0}}>🏥</div>}
+            <div>
+              <div style={{fontSize:15,fontWeight:600,color:"var(--color-text-primary)"}}>{sc.name}</div>
+              <div style={{fontSize:12,color:"var(--color-text-secondary)",marginTop:2}}>{sc.analyses.length} análisis · {sc.patients} pacientes únicos</div>
+            </div>
+            <div style={{flex:1,display:"flex",justifyContent:"flex-end"}}>
+              <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Buscar..." style={{...s.inp,width:200}}/>
+            </div>
+          </div>
+          {/* Analysis table */}
+          {!scAnalyses.length?<Card style={{textAlign:"center",padding:48,color:"#94a3b8"}}><div style={{fontSize:32,marginBottom:8}}>🔬</div><div style={{fontWeight:600}}>No hay análisis</div></Card>
+          :scAnalyses.map(a=>{const dc=diagColor(a.diagnosis,a.spermScore),sc2=scoreColor(a.spermScore);return(
+            <div key={a.id} onClick={()=>{setSelId(selId===a.id?null:a.id);}}
+              style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"13px 16px",background:selId===a.id?"#f0f7ff":"#fff",borderRadius:12,marginBottom:8,boxShadow:"0 1px 6px rgba(0,0,0,.04)",cursor:"pointer",border:`1.5px solid ${selId===a.id?"#0066B3":"var(--color-border-tertiary)"}`,gap:8,flexWrap:"wrap"}}>
+              <div>
+                <div style={{fontSize:13,fontWeight:600}}>{a.patientFirstName} {a.patientLastName}{a.sourceFile&&<span style={{background:"#f0fdf4",color:"#22c55e",border:"1px solid #bbf7d0",padding:"1px 7px",borderRadius:10,fontSize:9,fontWeight:700,marginLeft:6}}>📄 IA</span>}</div>
+                <div style={{fontSize:11,color:"var(--color-text-secondary)",marginTop:2}}>{a.procedureDate}{a.doctorName?" · "+a.doctorName:""}</div>
+              </div>
+              <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+                <Badge label={a.diagnosis} color={dc}/><Badge label={`Score: ${a.spermScore}`} color={sc2}/>
+              </div>
+            </div>
+          );})}
+          {/* Inline preview */}
+          {selId&&(()=>{const sel2=analyses.find(a=>a.id===selId);if(!sel2)return null;return(
+            <div style={{background:"#fff",borderRadius:14,padding:20,border:"2px solid #0066B3",marginTop:4}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:16,flexWrap:"wrap",gap:8}}>
+                <div><div style={{fontSize:15,fontWeight:700}}>{sel2.patientFirstName} {sel2.patientLastName}</div><div style={{fontSize:11,color:"#94a3b8",marginTop:2}}>{sel2.procedureDate}{sel2.doctorName?" · "+sel2.doctorName:""}</div></div>
+                <div style={{display:"flex",gap:8}}>
+                  <Btn size="sm" onClick={()=>downloadPDF({...sel2,recommendations:sel2.recommendations||[]},sc.id)}>⬇ PDF</Btn>
+                  <Btn size="sm" variant="secondary" onClick={()=>setSelId(null)}>✕</Btn>
+                </div>
+              </div>
+              <div style={{display:"flex",gap:16,alignItems:"center",flexWrap:"wrap",marginBottom:16}}>
+                <Gauge score={sel2.spermScore} size={96}/>
+                <div><Badge label={sel2.diagnosis} color={diagColor(sel2.diagnosis,sel2.spermScore)}/><div style={{fontSize:11,color:"#4a5568",marginTop:8,lineHeight:1.6,maxWidth:320}}>{sel2.aiNotes}</div></div>
+              </div>
+              <ParamBars params={sel2.params||{}}/>
+            </div>
+          );})()}
+        </div>);
+      }
+
+      // Grid de cards
+      return(<div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(280px,1fr))",gap:14}}>
+        {clinicList.map(c=>(<div key={c.id} style={{...s.card,cursor:"pointer",transition:"box-shadow .15s"}}
+          onMouseEnter={e=>e.currentTarget.style.boxShadow="0 4px 20px rgba(0,102,179,.12)"}
+          onMouseLeave={e=>e.currentTarget.style.boxShadow=""}>
+          <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:14}}>
+            {c.logoBase64
+              ?<img src={c.logoBase64} style={{width:48,height:48,borderRadius:10,objectFit:"contain",flexShrink:0}} alt="logo"/>
+              :<div style={{width:48,height:48,borderRadius:10,background:"#f0f4f8",display:"flex",alignItems:"center",justifyContent:"center",fontSize:24,flexShrink:0}}>🏥</div>}
+            <div>
+              <div style={{fontSize:14,fontWeight:600,color:"var(--color-text-primary)"}}>{c.name}</div>
+              {c.location&&<div style={{fontSize:11,color:"var(--color-text-secondary)",marginTop:2}}>{c.location}</div>}
+              <div style={{fontSize:10,color:"var(--color-text-secondary)",marginTop:1}}>ID: {c.id}</div>
+            </div>
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:14}}>
+            {[["Análisis",c.analyses.length,"#0066B3"],["Pacientes",c.patients,"#0097A7"]].map(([l,v,col])=>(
+              <div key={l} style={{background:"var(--color-background-secondary)",borderRadius:8,padding:"10px 12px",textAlign:"center"}}>
+                <div style={{fontSize:22,fontWeight:700,color:col}}>{v}</div>
+                <div style={{fontSize:10,color:"var(--color-text-secondary)",fontWeight:500}}>{l}</div>
+              </div>
+            ))}
+          </div>
+          <button onClick={()=>setSelectedClinic(c)} style={{...s.btnP,width:"100%",justifyContent:"center",fontSize:12}}>Ver análisis →</button>
+        </div>))}
+      </div>);
+    })()}
   </div>);
 }
 
@@ -801,6 +936,24 @@ function TrainingTab({user,toast}){
   </div>);
 }
 
+// ─── SPIN & CONFIRM MODAL ────────────────────────────────────────────────────
+function Spin({size=14}){
+  return(<div style={{width:size,height:size,border:"2px solid rgba(255,255,255,0.3)",borderTop:"2px solid white",borderRadius:"50%",animation:"spin 1s linear infinite",flexShrink:0}} className="ai-spin"/>);
+}
+
+function ConfirmModal({title,message,confirmText="Confirmar",isDanger,onConfirm,onClose}){
+  return(<div onClick={e=>{if(e.target===e.currentTarget)onClose();}} style={{position:"fixed",inset:0,zIndex:10001,background:"rgba(15,23,42,0.6)",display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+    <div style={{...s.card,maxWidth:440,width:"100%",background:"#fff",boxShadow:"0 24px 64px rgba(0,0,0,.2)"}}>
+      <h3 style={{fontSize:16,fontWeight:600,margin:"0 0 10px",color:"var(--color-text-primary)"}}>{title}</h3>
+      <p style={{fontSize:13,color:"var(--color-text-secondary)",margin:"0 0 20px",lineHeight:1.6}}>{message}</p>
+      <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
+        <button style={{...s.btn,fontSize:13}} onClick={onClose}>Cancelar</button>
+        <button style={{...(isDanger?s.btnD:s.btnP),fontSize:13,padding:"8px 18px"}} onClick={onConfirm}>{confirmText}</button>
+      </div>
+    </div>
+  </div>);
+}
+
 // ─── ADMIN TAB ────────────────────────────────────────────────────────────────
 function AdminTab({user,toast}){
   if(user.role==="masterAdmin")return<MasterPanel user={user} toast={toast}/>;
@@ -808,37 +961,155 @@ function AdminTab({user,toast}){
   return<div style={{color:"#94a3b8",textAlign:"center",padding:48}}>Sin acceso.</div>;
 }
 
-function MasterPanel({user,toast}){
-  const[clinics,setClinics]=useState([]);const[loading,setLoading]=useState(true);const[show,setShow]=useState(false);const[edit,setEdit]=useState(null);
-  const[form,setForm]=useState({name:"",location:"",clinicAdminUsername:"",clinicAdminPassword:"",clinicAdminDisplayName:"",status:"active"});
-  useEffect(()=>{(async()=>{setLoading(true);setClinics(await getPlatformClinics());setLoading(false);})();},[]);
-  function openNew(){setForm({name:"",location:"",clinicAdminUsername:"",clinicAdminPassword:"",clinicAdminDisplayName:"",status:"active"});setEdit(null);setShow(true);}
-  function openEdit(c){setForm({name:c.name,location:c.location||"",clinicAdminUsername:c.clinicAdminUsername||"",clinicAdminPassword:c.clinicAdminPassword||"",clinicAdminDisplayName:c.clinicAdminDisplayName||"",status:c.status||"active"});setEdit(c);setShow(true);}
-  async function handleSave(){if(!form.name||!form.clinicAdminUsername||!form.clinicAdminPassword){toast.add("Nombre, usuario y contraseña son obligatorios.","error");return;}const s=await savePlatformClinic({...form,id:edit?.id,createdAt:edit?.createdAt||new Date().toISOString()});if(edit)setClinics(p=>p.map(c=>c.id===s.id?s:c));else setClinics(p=>[...p,s]);setShow(false);toast.add(edit?"Clínica actualizada.":"Clínica creada.","success");}
-  async function handleDel(id){await deletePlatformClinic(id);setClinics(p=>p.filter(c=>c.id!==id));toast.add("Clínica eliminada.","success");}
-  return(<div style={{maxWidth:900,margin:"0 auto"}}>
-    <Modal open={show} onClose={()=>setShow(false)} title={edit?"Editar clínica":"Nueva clínica"}>
-      <Field label="Nombre de la clínica" value={form.name} onChange={v=>setForm(p=>({...p,name:v}))} required/>
-      <Field label="Ubicación" value={form.location} onChange={v=>setForm(p=>({...p,location:v}))}/>
-      <Field label="Nombre display del admin" value={form.clinicAdminDisplayName} onChange={v=>setForm(p=>({...p,clinicAdminDisplayName:v}))}/>
-      <Field label="Usuario Clinic Admin" value={form.clinicAdminUsername} onChange={v=>setForm(p=>({...p,clinicAdminUsername:v}))} required/>
-      <Field label="Contraseña Clinic Admin" value={form.clinicAdminPassword} onChange={v=>setForm(p=>({...p,clinicAdminPassword:v}))} required/>
-      <SField label="Estado" value={form.status} onChange={v=>setForm(p=>({...p,status:v}))}><option value="active">Activa</option><option value="inactive">Inactiva</option></SField>
-      <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}><Btn variant="secondary" onClick={()=>setShow(false)}>Cancelar</Btn><Btn variant="teal" onClick={handleSave}>{edit?"Actualizar":"Crear clínica"}</Btn></div>
-    </Modal>
-    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20,flexWrap:"wrap",gap:8}}>
-      <div><div style={{fontSize:16,fontWeight:700}}>Panel Master Admin</div><div style={{fontSize:12,color:"#94a3b8"}}>Gestión global de clínicas · SpermAI</div></div>
-      <Btn variant="teal" onClick={openNew}>+ Nueva clínica</Btn>
-    </div>
-    <Card style={{border:"2px solid #0097A7",marginBottom:12}}>
-      <div style={{display:"flex",justifyContent:"space-between",flexWrap:"wrap",gap:8}}><div><div style={{fontWeight:700,fontSize:14}}>CEGYR <Badge label="Hardcodeada" color="#0097A7"/></div><div style={{fontSize:12,color:"#94a3b8",marginTop:2}}>Admin: Laboratoriocegyr · clinicId: cegyr</div></div><Badge label="Activa" color="#22c55e"/></div>
-    </Card>
-    {loading?<div style={{textAlign:"center",padding:40,color:"#94a3b8"}}>Cargando...</div>:clinics.map(c=>(<Card key={c.id} style={{marginBottom:12}}>
-      <div style={{display:"flex",justifyContent:"space-between",flexWrap:"wrap",gap:8,alignItems:"center"}}>
-        <div><div style={{fontWeight:700,fontSize:14}}>{c.name}</div><div style={{fontSize:12,color:"#94a3b8",marginTop:2}}>{c.location&&c.location+" · "}Admin: {c.clinicAdminUsername}</div></div>
-        <div style={{display:"flex",gap:8,alignItems:"center"}}><Badge label={c.status==="active"?"Activa":"Inactiva"} color={c.status==="active"?"#22c55e":"#94a3b8"}/><Btn size="sm" variant="secondary" onClick={()=>openEdit(c)}>Editar</Btn><Btn size="sm" variant="danger" onClick={()=>handleDel(c.id)}>Eliminar</Btn></div>
+function ClinicModal({clinic,onSave,onClose}){
+  const ww=useWindowSize();const mob=ww<640;
+  const isNew=!clinic;
+  const[form,setForm]=useState(()=>clinic||{id:"",name:"",location:"",clinicAdminUsername:"",clinicAdminPassword:"",clinicAdminDisplayName:"",modules:[],status:"active",createdAt:Date.now(),logoBase64:null});
+  const[err,setErr]=useState("");const[showPass,setShowPass]=useState(false);const[uploadingLogo,setUploadingLogo]=useState(false);
+  const logoRef=useRef(null);
+  const f=(k,v)=>setForm(p=>({...p,[k]:v}));
+  const handleLogo=async file=>{if(!file||!file.type.startsWith("image/"))return;setUploadingLogo(true);const b64=await compress(file,400,0.85);f("logoBase64",b64);setUploadingLogo(false);};
+  const save=()=>{
+    if(!form.name.trim()){setErr("El nombre de la clínica es obligatorio.");return;}
+    if(!form.id.trim()){setErr("El ID es obligatorio (ej: clinicapalermo).");return;}
+    if(!/^[a-z0-9_-]+$/.test(form.id.trim())){setErr("El ID solo puede tener letras minúsculas, números, guiones y guiones bajos.");return;}
+    if(!form.clinicAdminUsername.trim()){setErr("El usuario del Clinic Admin es obligatorio.");return;}
+    if(!form.clinicAdminPassword.trim()){setErr("La contraseña del Clinic Admin es obligatoria.");return;}
+    onSave({...form,id:form.id.trim().toLowerCase(),name:form.name.trim(),location:form.location.trim(),clinicAdminUsername:form.clinicAdminUsername.trim(),clinicAdminDisplayName:form.clinicAdminDisplayName.trim()||`Admin ${form.name.trim()}`});
+  };
+  return(<div style={{position:"fixed",inset:0,zIndex:10000,background:"rgba(15,23,42,0.7)",display:"flex",alignItems:"center",justifyContent:"center",padding:20}} onClick={e=>{if(e.target===e.currentTarget)onClose();}}>
+    <div style={{background:"#ffffff",borderRadius:20,width:"100%",maxWidth:560,boxShadow:"0 24px 64px rgba(0,0,0,0.35)",overflow:"hidden",maxHeight:"90vh",overflowY:"auto"}}>
+      <div style={{background:"linear-gradient(135deg,#1e293b,#0f172a)",padding:"20px 24px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+        <div>
+          <p style={{fontSize:17,fontWeight:700,color:"white",margin:"0 0 2px"}}>{isNew?"Nueva clínica":"Editar clínica"}</p>
+          <p style={{fontSize:12,color:"rgba(255,255,255,0.5)",margin:0}}>{isNew?"Configurá los datos y el acceso del administrador":"Modificá los datos de la clínica"}</p>
+        </div>
+        <button onClick={onClose} style={{background:"rgba(255,255,255,0.1)",border:"none",borderRadius:8,width:32,height:32,cursor:"pointer",color:"white",fontSize:18,display:"flex",alignItems:"center",justifyContent:"center"}}>×</button>
       </div>
-    </Card>))}
+      <div style={{padding:"20px 24px",display:"flex",flexDirection:"column",gap:16}}>
+        <p style={{fontSize:11,fontWeight:600,color:"var(--color-text-secondary)",textTransform:"uppercase",letterSpacing:"0.08em",margin:0}}>Logo de la clínica</p>
+        <div style={{display:"flex",alignItems:"center",gap:14}}>
+          <div style={{width:72,height:72,borderRadius:12,border:"1.5px dashed var(--color-border-secondary)",background:"var(--color-background-secondary)",display:"flex",alignItems:"center",justifyContent:"center",overflow:"hidden",flexShrink:0}}>
+            {form.logoBase64?<img src={form.logoBase64} style={{width:"100%",height:"100%",objectFit:"contain"}}/>:<span style={{fontSize:28}}>🏥</span>}
+          </div>
+          <div style={{flex:1}}>
+            <input ref={logoRef} type="file" accept="image/*" style={{display:"none"}} onChange={e=>{if(e.target.files?.[0])handleLogo(e.target.files[0]);e.target.value="";}}/>
+            <button style={{...s.btn,marginBottom:6}} onClick={()=>logoRef.current?.click()} disabled={uploadingLogo}>{uploadingLogo?<Spin size={13}/>:"📁"} {form.logoBase64?"Cambiar logo":"Subir logo"}</button>
+            {form.logoBase64&&<button style={{...s.btn,color:"#dc2626",display:"block",marginTop:4,fontSize:12}} onClick={()=>f("logoBase64",null)}>× Quitar logo</button>}
+            <p style={{fontSize:11,color:"var(--color-text-secondary)",margin:"6px 0 0"}}>PNG o JPG · Aparece en los informes PDF</p>
+          </div>
+        </div>
+        <div style={{height:1,background:"var(--color-border-tertiary)"}}/>
+        <p style={{fontSize:11,fontWeight:600,color:"var(--color-text-secondary)",textTransform:"uppercase",letterSpacing:"0.08em",margin:0}}>Datos de la clínica</p>
+        <div style={{display:"grid",gridTemplateColumns:mob?"1fr":"2fr 1fr",gap:10}}>
+          <div><label style={s.lbl}>Nombre</label><input style={s.inp} value={form.name} onChange={e=>f("name",e.target.value)} placeholder="Ej: Clínica Palermo"/></div>
+          <div><label style={s.lbl}>ID único</label><input style={{...s.inp,opacity:!isNew?0.6:1}} value={form.id} onChange={e=>f("id",e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g,""))} placeholder="clinicapalermo" disabled={!isNew}/>{isNew&&<p style={{fontSize:10,color:"var(--color-text-secondary)",margin:"3px 0 0 2px"}}>Solo minúsculas y sin espacios</p>}</div>
+        </div>
+        <div><label style={s.lbl}>Ubicación</label><input style={s.inp} value={form.location} onChange={e=>f("location",e.target.value)} placeholder="Ej: Buenos Aires, AR"/></div>
+        <div style={{height:1,background:"var(--color-border-tertiary)"}}/>
+        <p style={{fontSize:11,fontWeight:600,color:"var(--color-text-secondary)",textTransform:"uppercase",letterSpacing:"0.08em",margin:0}}>Clinic Admin de esta clínica</p>
+        <div><label style={s.lbl}>Nombre para mostrar</label><input style={s.inp} value={form.clinicAdminDisplayName} onChange={e=>f("clinicAdminDisplayName",e.target.value)} placeholder="Ej: Administrador Palermo"/></div>
+        <div style={{display:"grid",gridTemplateColumns:mob?"1fr":"1fr 1fr",gap:10}}>
+          <div><label style={s.lbl}>Usuario</label><input style={{...s.inp,opacity:!isNew?0.6:1}} value={form.clinicAdminUsername} onChange={e=>f("clinicAdminUsername",e.target.value)} placeholder="adminclinica" disabled={!isNew} autoComplete="off"/>{!isNew&&<p style={{fontSize:10,color:"var(--color-text-secondary)",margin:"3px 0 0 2px"}}>No se puede cambiar</p>}</div>
+          <div><label style={s.lbl}>Contraseña</label>
+            <div style={{position:"relative"}}>
+              <input style={{...s.inp,paddingRight:36}} type={showPass?"text":"password"} value={form.clinicAdminPassword} onChange={e=>f("clinicAdminPassword",e.target.value)} placeholder="••••••••" autoComplete="new-password"/>
+              <button onClick={()=>setShowPass(p=>!p)} style={{position:"absolute",right:10,top:"50%",transform:"translateY(-50%)",background:"none",border:"none",cursor:"pointer",fontSize:14,padding:0,color:"var(--color-text-secondary)"}}>{showPass?"🙈":"👁️"}</button>
+            </div>
+          </div>
+        </div>
+        {err&&<div style={{display:"flex",alignItems:"center",gap:8,padding:"10px 14px",background:"#fef2f2",border:"1px solid #fecaca",borderRadius:10,fontSize:13,color:"#dc2626"}}><span>⚠️</span>{err}</div>}
+        <div style={{padding:"10px 14px",background:"#fffbeb",border:"0.5px solid #fde68a",borderRadius:10,fontSize:12,color:"#78350f",lineHeight:1.6}}>
+          💡 Las credenciales del Clinic Admin se guardan en Firestore bajo <code style={{background:"#fef9c3",padding:"1px 4px",borderRadius:4}}>platformClinics/{form.id||"..."}</code>.
+        </div>
+        <div style={{display:"flex",gap:10,paddingTop:4}}>
+          <button style={{...s.btn,flex:1,justifyContent:"center",padding:"10px",borderRadius:10,fontSize:13}} onClick={onClose}>Cancelar</button>
+          <button style={{...s.btnP,flex:2,justifyContent:"center",padding:"10px",borderRadius:10,fontSize:13,fontWeight:600,background:"#1e293b"}} onClick={save}>{isNew?"✓ Crear clínica":"✓ Guardar cambios"}</button>
+        </div>
+      </div>
+    </div>
+  </div>);
+}
+
+function MasterPanel({user,toast}){
+  const ww=useWindowSize();const mob=ww<640;
+  const[clinics,setClinics]=useState({});const[loading,setLoading]=useState(true);const[modal,setModal]=useState(null);const[delTarget,setDelTarget]=useState(null);const[showPass,setShowPass]=useState({});
+  useEffect(()=>{getPlatformClinicsMap().then(c=>{setClinics(c||{});setLoading(false);}).catch(()=>setLoading(false));},[]);
+  const handleSave=async data=>{
+    try{await savePlatformClinic(data);setClinics(p=>({...p,[data.id]:data}));setModal(null);toast.add(modal==="new"?"✓ Clínica creada":"✓ Clínica actualizada","success");}
+    catch(e){toast.add("Error al guardar: "+String(e?.message||e),"error");}
+  };
+  const handleDelete=async id=>{
+    try{await deletePlatformClinic(id);setClinics(p=>{const n={...p};delete n[id];return n;});toast.add("Clínica eliminada","success");}
+    catch(e){toast.add("Error al eliminar: "+String(e?.message||e),"error");}
+    setDelTarget(null);
+  };
+  const FUNDACIONAL={id:"cegyr",name:"CEGYR",location:"Buenos Aires, AR",clinicAdminUsername:"Laboratoriocegyr",clinicAdminDisplayName:"Administrador CEGYR",modules:["SpermAI"],status:"active",hardcoded:true};
+  const allClinics=[FUNDACIONAL,...Object.values(clinics).sort((a,b)=>(a.createdAt||0)-(b.createdAt||0))];
+  return(<div style={{display:"flex",flexDirection:"column",gap:"1.5rem"}}>
+    {/* Header */}
+    <div style={{background:"linear-gradient(135deg,#1e293b,#0f172a)",borderRadius:16,padding:"1.5rem 2rem",color:"white",display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:12}}>
+      <div style={{display:"flex",alignItems:"center",gap:12}}>
+        <span style={{fontSize:28}}>🛡️</span>
+        <div>
+          <p style={{fontSize:18,fontWeight:700,margin:0,letterSpacing:"-0.02em"}}>Panel Master Admin</p>
+          <p style={{fontSize:12,color:"rgba(255,255,255,0.5)",margin:0}}>Ferti IA Platform · {allClinics.length} clínica{allClinics.length!==1?"s":""} activa{allClinics.length!==1?"s":""}</p>
+        </div>
+      </div>
+      <button style={{...s.btnP,background:"rgba(255,255,255,0.15)",border:"1px solid rgba(255,255,255,0.25)",fontWeight:600}} onClick={()=>setModal("new")}>+ Nueva clínica</button>
+    </div>
+    {/* Lista */}
+    <div style={s.card}>
+      <p style={{fontSize:12,fontWeight:600,color:"var(--color-text-secondary)",textTransform:"uppercase",letterSpacing:"0.08em",margin:"0 0 14px"}}>Clínicas en la plataforma ({allClinics.length})</p>
+      {loading?<div style={{padding:"2rem",textAlign:"center"}}><Spin size={24}/></div>:(
+        <div style={{display:"flex",flexDirection:"column",gap:10}}>
+          {allClinics.map(clinic=>(
+            <div key={clinic.id} style={{padding:"14px 16px",background:"var(--color-background-secondary)",borderRadius:12,border:`0.5px solid ${clinic.hardcoded?"#b2ebf2":"var(--color-border-tertiary)"}`}}>
+              <div style={{display:"flex",alignItems:"flex-start",gap:14}}>
+                <div style={{width:42,height:42,borderRadius:10,overflow:"hidden",flexShrink:0,background:clinic.hardcoded?"linear-gradient(135deg,#0097A7,#0066B3)":"linear-gradient(135deg,#0066B3,#0080D6)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:20}}>
+                  {clinic.logoBase64?<img src={clinic.logoBase64} style={{width:"100%",height:"100%",objectFit:"contain"}}/>:"🏥"}
+                </div>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:3,flexWrap:"wrap"}}>
+                    <p style={{fontWeight:700,fontSize:14,margin:0}}>{clinic.name}</p>
+                    {clinic.hardcoded&&<span style={{fontSize:10,padding:"2px 7px",background:"#e0f7fa",color:"#00695C",borderRadius:99,fontWeight:600}}>FUNDACIONAL</span>}
+                    <span style={{fontSize:10,padding:"2px 7px",background:"#dcfce7",color:"#166534",borderRadius:99,fontWeight:600}}>ACTIVA</span>
+                    <span style={{fontSize:10,padding:"2px 7px",background:"var(--color-background-primary)",color:"var(--color-text-secondary)",borderRadius:99,border:"0.5px solid var(--color-border-secondary)"}}>ID: {clinic.id}</span>
+                  </div>
+                  {clinic.location&&<p style={{fontSize:12,color:"var(--color-text-secondary)",margin:"0 0 8px"}}>{clinic.location}</p>}
+                  <div style={{display:"flex",alignItems:"center",gap:8,padding:"8px 12px",background:"var(--color-background-primary)",borderRadius:8,border:"0.5px solid var(--color-border-tertiary)"}}>
+                    <span style={{fontSize:14}}>👑</span>
+                    <div style={{flex:1,minWidth:0}}>
+                      <p style={{fontSize:12,fontWeight:600,margin:0}}>{clinic.clinicAdminDisplayName||"Clinic Admin"}</p>
+                      <p style={{fontSize:11,color:"var(--color-text-secondary)",margin:0}}>@{clinic.clinicAdminUsername}
+                        {!clinic.hardcoded&&<span style={{marginLeft:6,cursor:"pointer",userSelect:"none"}} onClick={()=>setShowPass(p=>({...p,[clinic.id]:!p[clinic.id]}))}>{showPass[clinic.id]?` · ${clinic.clinicAdminPassword}`:" · ••••••• 👁️"}</span>}
+                        {clinic.hardcoded&&<span style={{marginLeft:6,fontSize:10,color:"#0097A7"}}>· credencial hardcodeada</span>}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+                {!clinic.hardcoded&&<div style={{display:"flex",gap:6,flexShrink:0}}>
+                  <button style={{...s.btn,padding:"6px 10px",fontSize:12}} onClick={()=>setModal(clinic)}>✎ Editar</button>
+                  <button style={{...s.btn,padding:"6px 10px",fontSize:12,color:"#dc2626"}} onClick={()=>setDelTarget(clinic.id)}>× Eliminar</button>
+                </div>}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+    {/* Firestore info */}
+    <div style={{...s.card,background:"#f8fafc",border:"0.5px solid #e2e8f0"}}>
+      <p style={{fontSize:12,fontWeight:600,color:"var(--color-text-secondary)",textTransform:"uppercase",letterSpacing:"0.08em",margin:"0 0 10px"}}>Estructura Firestore</p>
+      {[["platformClinics/{id}","Config de cada clínica y credenciales del Clinic Admin"],["/clinics/{id}/patients","Pacientes aislados por clínica"],["/clinics/{id}/analyses","Análisis por clínica"],["/clinics/{id}/users","Usuarios normales por clínica"]].map(([path,desc])=>(
+        <div key={path} style={{display:"flex",gap:12,padding:"6px 0",borderBottom:"0.5px solid var(--color-border-tertiary)"}}>
+          <code style={{fontSize:11,color:"#0066B3",fontFamily:"monospace",flexShrink:0,minWidth:mob?140:260}}>{path}</code>
+          <p style={{fontSize:11,color:"var(--color-text-secondary)",margin:0}}>{desc}</p>
+        </div>
+      ))}
+    </div>
+    {modal!==null&&<ClinicModal clinic={modal==="new"?null:modal} onSave={handleSave} onClose={()=>setModal(null)}/>}
+    {delTarget&&<ConfirmModal title="Eliminar clínica" message={`¿Estás seguro? Se eliminará la configuración de la clínica "${clinics[delTarget]?.name}". Los datos clínicos en Firestore NO se borran automáticamente.`} confirmText="Eliminar clínica" isDanger onConfirm={()=>handleDelete(delTarget)} onClose={()=>setDelTarget(null)}/>}
   </div>);
 }
 
@@ -851,6 +1122,10 @@ function ClinicPanel({user,toast}){
   function openEdit(u){setForm({displayName:u.displayName||"",username:stripPrefix(cid,u.username),password:u.password||"",permissions:u.permissions||{analysis:true,portal:true,stats:false,training:false}});setEdit(u);setShow(true);}
   async function handleSave(){if(!form.displayName||!form.username||!form.password){toast.add("Nombre, usuario y contraseña son obligatorios.","error");return;}const s=await saveUser(cid,{id:edit?.id,displayName:form.displayName,username:prefixUsername(cid,form.username),password:form.password,role:"user",clinicId:cid,permissions:form.permissions});if(edit)setUsers(p=>p.map(u=>u.id===s.id?s:u));else setUsers(p=>[...p,s]);setShow(false);toast.add(edit?"Usuario actualizado.":"Usuario creado.","success");}
   async function handleDel(id){await deleteUser(cid,id);setUsers(p=>p.filter(u=>u.id!==id));toast.add("Usuario eliminado.","success");}
+  const[clinicLogo,setClinicLogo]=useState(null);
+  useEffect(()=>{(async()=>{try{const cls=await getPlatformClinics();const c=cls.find(x=>x.id===cid);if(c?.logoBase64)setClinicLogo(c.logoBase64);}catch{}})();},[cid]);
+  async function handleLogoUpload(file){if(!file)return;const b64=await compress(file,400,0.85);try{const cls=await getPlatformClinics();const existing=cls.find(x=>x.id===cid)||{id:cid};await savePlatformClinic({...existing,logoBase64:b64});setClinicLogo(b64);toast.add("Logo guardado.","success");}catch{toast.add("Error al guardar logo.","error");}}
+  async function handleLogoRemove(){try{const cls=await getPlatformClinics();const existing=cls.find(x=>x.id===cid)||{id:cid};await savePlatformClinic({...existing,logoBase64:null});setClinicLogo(null);toast.add("Logo eliminado.","success");}catch{toast.add("Error.","error");}}
   return(<div style={{maxWidth:800,margin:"0 auto"}}>
     <Modal open={show} onClose={()=>setShow(false)} title={edit?"Editar usuario":"Nuevo usuario"}>
       <Field label="Nombre completo" value={form.displayName} onChange={v=>setForm(p=>({...p,displayName:v}))} required/>
@@ -863,6 +1138,20 @@ function ClinicPanel({user,toast}){
       </div>
       <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}><Btn variant="secondary" onClick={()=>setShow(false)}>Cancelar</Btn><Btn onClick={handleSave}>{edit?"Actualizar":"Crear usuario"}</Btn></div>
     </Modal>
+    {/* Logo section */}
+    <Card style={{marginBottom:14}}>
+      <div style={{fontSize:13,fontWeight:600,marginBottom:12}}>Logo de la clínica</div>
+      <div style={{display:"flex",alignItems:"center",gap:16}}>
+        {clinicLogo
+          ?<img src={clinicLogo} style={{width:80,height:80,borderRadius:12,objectFit:"contain",border:"0.5px solid var(--color-border-tertiary)"}} alt="logo"/>
+          :<div style={{width:80,height:80,borderRadius:12,background:"var(--color-background-secondary)",border:"0.5px dashed var(--color-border-secondary)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:32}}>🏥</div>}
+        <div style={{display:"flex",flexDirection:"column",gap:8}}>
+          <input id="clinic-logo-input" type="file" accept="image/*" style={{display:"none"}} onChange={e=>{if(e.target.files[0])handleLogoUpload(e.target.files[0]);}}/>
+          <Btn size="sm" onClick={()=>document.getElementById("clinic-logo-input").click()}>📷 {clinicLogo?"Cambiar logo":"Subir logo"}</Btn>
+          {clinicLogo&&<Btn size="sm" variant="danger" onClick={handleLogoRemove}>× Quitar</Btn>}
+        </div>
+      </div>
+    </Card>
     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16,flexWrap:"wrap",gap:8}}>
       <div><div style={{fontSize:15,fontWeight:700}}>Gestión de usuarios</div><div style={{fontSize:11,color:"#94a3b8",marginTop:2}}>{user.displayName} · Clínica {cid}</div></div>
       <Btn onClick={openNew}>+ Nuevo usuario</Btn>
