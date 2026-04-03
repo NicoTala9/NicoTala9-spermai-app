@@ -220,7 +220,12 @@ async function deletePlatformClinic(id) {
 
 // ─── CLASSIFICATION ───────────────────────────────────────────────────────────
 function classify(p) {
-  if(p.concentration===0)return{diagnosis:"Azoospermia",score:0,recs:["Ausencia total de espermatozoides. Confirmar con segunda muestra y evaluación andrológica completa."],aiNotes:"Análisis procesado con referencia OMS 2021 (6ª ed.). Azoospermia confirmada."};
+  if(p.concentration===0) return{
+    diagnosis:"Azoospermia",score:0,
+    recs:["Ausencia total de espermatozoides en el eyaculado.","Confirmar con segunda muestra tras centrifugación.","Evaluación andrológica completa: FSH, LH, testosterona, ecografía testicular.","Considerar biopsia testicular (TESE/mTESE) para recuperación espermática."],
+    techniques:[{id:"tese",label:"TESE / mTESE",icon:"🔬",color:"#7c3aed",desc:"Extracción quirúrgica de espermatozoides si hay producción testicular"}],
+    aiNotes:"Azoospermia confirmada. Ausencia de espermatozoides en el eyaculado."
+  };
   const issues=[];
   if(p.concentration<16)issues.push("oligo");
   if(p.progressiveMotility<30)issues.push("aste");
@@ -232,17 +237,57 @@ function classify(p) {
   const sv=v=>Math.min(100,v);
   const dfiS=p.dfi<=15?100:p.dfi<=25?60:Math.max(0,100-(p.dfi-25)*4);
   const score=Math.round(sv((p.concentration/16)*100)*.22+sv((p.progressiveMotility/30)*100)*.22+sv((p.totalMotility/42)*100)*.12+sv((p.morphology/4)*100)*.18+sv((p.vitality/54)*100)*.10+sv((p.volume/1.4)*100)*.08+dfiS*.08);
+
+  // Clinical recommendations
   const recs=[];
-  if(p.concentration<16)recs.push("Considerar evaluación hormonal (FSH, LH, testosterona) y ecografía testicular.");
-  if(p.progressiveMotility<30)recs.push("Evaluar estrés oxidativo seminal. Antioxidantes (vitamina E, C, CoQ10) pueden mejorar motilidad.");
-  if(p.morphology<4)recs.push("Morfología alterada. Considerar ICSI si se planifica FIV. Descartar exposición a tóxicos.");
-  if(p.dfi>25)recs.push("DFI elevado (>25%). Riesgo aumentado de fallo de implantación y aborto. Evaluar IMSI/ICSI.");
-  if(p.vitality<54)recs.push("Vitalidad reducida. Test HOS para confirmar necrozoospermia.");
-  if(p.volume<1.4)recs.push("Hipospermia. Descartar obstrucción de conductos eyaculadores.");
-  if(recs.length===0)recs.push("Parámetros dentro de valores de referencia OMS 2021. Capacidad fecundante normal.");
+  if(p.concentration<16)recs.push("Evaluar FSH, LH y testosterona para descartar causa hormonal. Ecografía testicular recomendada.");
+  if(p.progressiveMotility<30)recs.push("Estrés oxidativo seminal probable. Suplementar con antioxidantes (vitamina E 400mg/día, vitamina C 1g/día, CoQ10 200mg/día) durante 3 meses.");
+  if(p.morphology<4)recs.push("Teratozoospermia. Descartar exposición a calor, tóxicos o tabaco. ICSI es la técnica de elección en ciclos de FIV.");
+  if(p.dfi>25)recs.push("DFI elevado (>25%). Aumenta riesgo de fallo de implantación y aborto. Considerar selección espermática avanzada (IMSI, microfluidica, swim-up).");
+  if(p.dfi>15&&p.dfi<=25)recs.push("DFI en zona límite. Monitorear. Técnicas de selección espermática pueden mejorar resultados.");
+  if(p.vitality<54)recs.push("Vitalidad reducida. Realizar test HOS para confirmar necrozoospermia. Evaluar osmolaridad seminal.");
+  if(p.volume<1.4)recs.push("Hipospermia. Descartar eyaculación retrógrada, obstrucción de conductos eyaculadores o hipogonadismo.");
+  if(recs.length===0)recs.push("Parámetros dentro de valores normativos OMS 2021. Capacidad fecundante conservada.");
+
+  // Technique recommendations
+  const techniques=[];
+  const totalSperm=(p.concentration||0)*(p.volume||0);
+  const progSperm=totalSperm*(p.progressiveMotility/100);
+
+  // Preparación seminal
+  if(p.concentration>=16&&p.progressiveMotility>=30&&p.morphology>=4){
+    techniques.push({id:"wash",label:"Lavado simple",icon:"💧",color:"#0097A7",desc:"Técnica básica adecuada para muestras normales"});
+  }
+  if(p.concentration>=5&&p.progressiveMotility>=20){
+    techniques.push({id:"swimup",label:"Swim-up",icon:"🏊",color:"#0066B3",desc:"Selección por motilidad. Ideal si concentración ≥5 mill/mL y motilidad progresiva ≥20%"});
+  }
+  if(p.concentration>=2){
+    techniques.push({id:"gradient",label:"Gradiente de densidad",icon:"⚗️",color:"#7c3aed",desc:"Mejor selección morfológica y funcional. Indicado en oligozoospermia moderada"});
+  }
+  if(p.dfi>15||p.morphology<4){
+    techniques.push({id:"microfluidics",label:"Microfluidica",icon:"🔬",color:"#059669",desc:"Selección por DFI y morfología. Recomendada cuando DFI >15% o morfología alterada"});
+  }
+
+  // Técnica de reproducción asistida
+  const iuiFeasible=progSperm>=5&&p.morphology>=4&&p.dfi<=25;
+  const ivfFeasible=progSperm>=1&&(p.morphology>=4||p.concentration>=5);
+
+  if(iuiFeasible){
+    techniques.push({id:"iui",label:"IIU viable",icon:"✅",color:"#22c55e",desc:`Inseminación intrauterina factible. Espermatozoides progresivos totales: ${progSperm.toFixed(1)} mill (umbral: ≥5 mill). Morfología y DFI dentro de parámetros.`});
+  } else if(ivfFeasible&&!iuiFeasible){
+    const reason=progSperm<5?"Espermatozoides progresivos totales <5 mill":p.morphology<4?"Morfología <4% (Kruger)":"DFI elevado";
+    techniques.push({id:"fiv",label:"FIV / ICSI indicado",icon:"⚠️",color:"#f59e0b",desc:`IIU no recomendada: ${reason}. Evaluar FIV convencional o ICSI según morfología.`});
+  } else {
+    techniques.push({id:"icsi",label:"ICSI recomendado",icon:"🎯",color:"#ef4444",desc:"Parámetros seminales severamente comprometidos. ICSI es la técnica de elección."});
+  }
+
+  if(p.morphology<4||(p.dfi>15)){
+    techniques.push({id:"icsi_adv",label:"ICSI avanzado",icon:"🎯",color:p.dfi>25?"#ef4444":"#f59e0b",desc:p.dfi>25?"DFI >25% y morfología alterada. IMSI o selección por microfluidica + ICSI para minimizar riesgo de fallo.":"Morfología alterada o DFI en zona de riesgo. Considerar IMSI para selección morfológica avanzada."});
+  }
+
   const prog=(p.concentration*(p.progressiveMotility/100)).toFixed(1);
-  const aiNotes=`Análisis procesado con referencia OMS 2021 (6ª ed.). ${diagnosis==="Normal"?"Parámetros dentro de valores normativos.":"Se detectaron alteraciones: "+diagnosis.toLowerCase()+"."} Espermatozoides progresivos estimados: ${prog} mill/mL.`;
-  return{diagnosis,score,recs,aiNotes};
+  const aiNotes=`Análisis procesado con referencia OMS 2021 (6ª ed.). ${diagnosis==="Normal"?"Parámetros dentro de valores normativos.":"Alteraciones: "+diagnosis.toLowerCase()+"."} Espermatozoides progresivos estimados: ${prog} mill/mL.`;
+  return{diagnosis,score,recs,techniques,aiNotes};
 }
 
 // ─── HELPERS ─────────────────────────────────────────────────────────────────
@@ -476,7 +521,7 @@ function LoginScreen({onLogin}){
 function AnalysisTab({user,toast}){
   const cid=user.clinicId||CLINIC_ID;
   const[step,setStep]=useState(1);
-  const[patient,setPatient]=useState({id:"",firstName:"",lastName:"",dob:"",doctorName:"",procedureDate:new Date().toISOString().split("T")[0]});
+  const[patient,setPatient]=useState({id:"",firstName:"",lastName:"",dob:"",doctorName:"",procedureDate:new Date().toISOString().split("T")[0],abstinenceDays:""});
   const[patientSuggestions,setPatientSuggestions]=useState([]);
   const[showSuggestions,setShowSuggestions]=useState(false);
   const[paramValues,setParamValues]=useState({concentration:"",progressiveMotility:"",totalMotility:"",morphology:"",vitality:"",volume:"",dfi:""});
@@ -510,14 +555,14 @@ function AnalysisTab({user,toast}){
       // Save patient doc
       await savePatient(cid,{id:pid,firstName:patient.firstName,lastName:patient.lastName,doctorName:patient.doctorName,dateOfBirth:patient.dob,clinicId:cid});
       // Save analysis with patientId
-      await saveAnalysis(cid,{patientId:pid,patientFirstName:patient.firstName,patientLastName:patient.lastName,patientDob:patient.dob,doctorName:patient.doctorName,procedureDate:patient.procedureDate,createdBy:user.id,createdByName:user.displayName,params:result.params,diagnosis:result.diagnosis,spermScore:result.score,aiNotes:result.aiNotes,recommendations:result.recs,sourceFile:sourceFile||null,linkedOocyteAnalysisId:null});
+      await saveAnalysis(cid,{patientId:pid,patientFirstName:patient.firstName,patientLastName:patient.lastName,patientDob:patient.dob,doctorName:patient.doctorName,procedureDate:patient.procedureDate,abstinenceDays:patient.abstinenceDays?parseInt(patient.abstinenceDays):null,createdBy:user.id,createdByName:user.displayName,params:result.params,diagnosis:result.diagnosis,spermScore:result.score,aiNotes:result.aiNotes,recommendations:result.recs,techniques:result.techniques||[],sourceFile:sourceFile||null,linkedOocyteAnalysisId:null});
       setSaved(true);toast.add("Análisis guardado correctamente.","success");
       setTimeout(()=>reset(),1200);
     }catch{toast.add("Error al guardar.","error");}finally{setSaving(false);}
   }
 
   function reset(){
-    setStep(1);setPatient({id:"",firstName:"",lastName:"",dob:"",doctorName:"",procedureDate:new Date().toISOString().split("T")[0]});
+    setStep(1);setPatient({id:"",firstName:"",lastName:"",dob:"",doctorName:"",procedureDate:new Date().toISOString().split("T")[0],abstinenceDays:""});
     setParamValues({concentration:"",progressiveMotility:"",totalMotility:"",morphology:"",vitality:"",volume:"",dfi:""});
     setAiData({});setFromAI(false);setSourceFile(null);setResult(null);setSaved(false);setAiServerNotes(null);
     setPatientSuggestions([]);setShowSuggestions(false);
@@ -603,6 +648,14 @@ function StepPatient({data,onChange,cid,suggestions,setSuggestions,showSuggestio
       <Field label="Fecha de Nacimiento" type="date" value={data.dob} onChange={v=>onChange("dob",v)}/>
       <Field label="Médico Solicitante" value={data.doctorName} onChange={v=>onChange("doctorName",v)} placeholder="Dr/a..."/>
       <Field label="Fecha de Procedimiento" type="date" value={data.procedureDate} onChange={v=>onChange("procedureDate",v)} required/>
+    </div>
+    <div style={{marginBottom:14}}>
+      <label style={s.lbl}>Días de abstinencia</label>
+      <div style={{display:"flex",alignItems:"center",gap:12}}>
+        <input type="number" min={0} max={30} value={data.abstinenceDays} onChange={e=>onChange("abstinenceDays",e.target.value)} placeholder="Ej: 3"
+          style={{...s.inp,width:120}}/>
+        <span style={{fontSize:11,color:"var(--color-text-secondary)"}}>OMS: 2-7 días recomendados{data.abstinenceDays&&(parseInt(data.abstinenceDays)<2||parseInt(data.abstinenceDays)>7)?<span style={{color:"#f59e0b",fontWeight:600}}> · ⚠ fuera del rango recomendado</span>:data.abstinenceDays?<span style={{color:"#22c55e",fontWeight:600}}> · ✓ dentro del rango</span>:""}</span>
+      </div>
     </div>
     {!canContinue&&<div style={{fontSize:11,color:"var(--color-text-secondary)",marginBottom:8}}>* ID Paciente, Nombre, Apellido y Fecha de Procedimiento son obligatorios.</div>}
     <div className="btn-row" style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:12}}>
@@ -772,31 +825,215 @@ function StepParams({values,onChange,aiData,fromAI,aiNotes,onNext,onBack}){
   </Card>);
 }
 
+function ParamRow({label,value,unit,refMin,refMax,isMax}){
+  const ok=isMax?(value<=refMax):(value>=refMin);
+  const pct=isMax?Math.min(100,(value/(refMax*2))*100):Math.min(100,(value/(refMin*1.5))*100);
+  const col=ok?"#22c55e":"#ef4444";
+  const ref=isMax?`≤${refMax}`:`≥${refMin}`;
+  return(
+    <div style={{display:"grid",gridTemplateColumns:"1fr auto 120px auto",alignItems:"center",gap:12,padding:"10px 0",borderBottom:"0.5px solid var(--color-border-tertiary)"}}>
+      <div style={{fontSize:12,color:"var(--color-text-primary)",fontWeight:500}}>{label}</div>
+      <div style={{fontSize:15,fontWeight:700,color:col,textAlign:"right",minWidth:60}}>{value} <span style={{fontSize:11,color:"var(--color-text-secondary)",fontWeight:400}}>{unit}</span></div>
+      <div style={{background:"var(--color-background-tertiary)",borderRadius:4,height:6,overflow:"hidden"}}>
+        <div style={{width:`${pct}%`,height:"100%",background:col,borderRadius:4,transition:"width .4s ease"}}/>
+      </div>
+      <div style={{fontSize:10,color:"var(--color-text-secondary)",whiteSpace:"nowrap"}}>ref {ref}</div>
+    </div>
+  );
+}
+
 function StepResult({result,patient,sourceFile,onSave,onConfirm,onNew,saving,saved}){
-  const{diagnosis,score,recs,aiNotes,params}=result,dc=diagColor(diagnosis,score);
-  return(<div>
-    {sourceFile&&<div style={{background:"#f0fdf4",border:"1.5px solid #bbf7d0",borderRadius:10,padding:"10px 14px",marginBottom:14,fontSize:11,color:"#166534",fontWeight:600,display:"flex",alignItems:"center",gap:8}}>✓ Parámetros extraídos de "{sourceFile}" por IA · Revisados y confirmados</div>}
-    <Card>
-      <div className="result-row" style={{display:"flex",gap:18,alignItems:"flex-start",flexWrap:"wrap"}}>
-        <Gauge score={score}/>
-        <div style={{flex:1,minWidth:180}}>
-          <div style={{fontSize:11,color:"#94a3b8",marginBottom:6}}>{patient.firstName} {patient.lastName} · {patient.procedureDate}</div>
-          <div style={{marginBottom:10}}><Badge label={diagnosis} color={dc}/></div>
-          <div style={{fontSize:11,color:"#4a5568",lineHeight:1.6}}>{aiNotes}</div>
+  const{diagnosis,score,recs,techniques,aiNotes,params}=result;
+  const dc=diagColor(diagnosis,score);const sc=scoreColor(score);
+  const abstDays=patient.abstinenceDays?parseInt(patient.abstinenceDays):null;
+  const abstWarn=abstDays!==null&&(abstDays<2||abstDays>7);
+  return(<div style={{maxWidth:800,margin:"0 auto"}}>
+    {sourceFile&&<div style={{background:"#f0fdf4",border:"0.5px solid #bbf7d0",borderRadius:10,padding:"10px 14px",marginBottom:14,fontSize:11,color:"#166534",display:"flex",alignItems:"center",gap:8}}>
+      ✓ Parámetros extraídos de "{sourceFile}" por IA · Revisados y confirmados
+    </div>}
+
+    {/* Header card */}
+    <Card style={{marginBottom:14,background:"var(--color-background-primary)"}}>
+      <div style={{display:"flex",gap:20,alignItems:"center",flexWrap:"wrap"}}>
+        {/* Score circle */}
+        <div style={{flexShrink:0,textAlign:"center"}}>
+          <Gauge score={score} size={110}/>
+        </div>
+        {/* Patient + diagnosis */}
+        <div style={{flex:1,minWidth:200}}>
+          <div style={{fontSize:11,color:"var(--color-text-secondary)",marginBottom:4}}>
+            {patient.firstName} {patient.lastName}
+            {patient.id&&<span style={{marginLeft:8,background:"var(--color-background-secondary)",padding:"1px 7px",borderRadius:6,fontFamily:"monospace",fontSize:10}}>ID: {patient.id}</span>}
+          </div>
+          <div style={{fontSize:11,color:"var(--color-text-secondary)",marginBottom:10}}>
+            {patient.procedureDate}{patient.doctorName?" · "+patient.doctorName:""}
+            {abstDays!==null&&<span style={{marginLeft:8,color:abstWarn?"#f59e0b":"var(--color-text-secondary)"}}>· {abstDays}d abstinencia{abstWarn?" ⚠":"✓"}</span>}
+          </div>
+          <div style={{marginBottom:8}}>
+            <Badge label={diagnosis} color={dc}/>
+          </div>
+          <div style={{fontSize:11,color:"var(--color-text-secondary)",lineHeight:1.7}}>{aiNotes}</div>
         </div>
       </div>
+      {abstWarn&&<div style={{marginTop:12,padding:"8px 12px",background:"#fffbeb",borderRadius:8,fontSize:11,color:"#92400e"}}>
+        ⚠ Días de abstinencia fuera del rango recomendado (2-7 días). Puede afectar concentración y volumen.
+      </div>}
     </Card>
-    <Card><div style={{fontSize:13,fontWeight:700,color:"#0066B3",marginBottom:14}}>Parámetros evaluados</div><ParamBars params={params}/></Card>
-    <Card>
-      <div style={{fontSize:13,fontWeight:700,color:"#0066B3",marginBottom:12}}>Recomendaciones IA</div>
-      {recs.map((r,i)=>(<div key={i} style={{display:"flex",gap:8,padding:"9px 11px",background:"#f0f4f8",borderRadius:8,marginBottom:6,fontSize:11,lineHeight:1.55}}><span style={{color:"#0066B3",flexShrink:0}}>→</span>{r}</div>))}
+
+    {/* Parameters table */}
+    <Card style={{marginBottom:14}}>
+      <div style={{fontSize:13,fontWeight:600,color:"var(--color-text-primary)",marginBottom:4}}>Parámetros OMS 2021</div>
+      <div style={{fontSize:11,color:"var(--color-text-secondary)",marginBottom:14}}>6ª edición · Valores de referencia</div>
+      <ParamRow label="Concentración" value={params.concentration} unit="mill/mL" refMin={16} isMax={false}/>
+      <ParamRow label="Motilidad Progresiva (PR)" value={params.progressiveMotility} unit="%" refMin={30} isMax={false}/>
+      <ParamRow label="Motilidad Total (PR+NP)" value={params.totalMotility} unit="%" refMin={42} isMax={false}/>
+      <ParamRow label="Morfología Kruger" value={params.morphology} unit="%" refMin={4} isMax={false}/>
+      <ParamRow label="Vitalidad" value={params.vitality} unit="%" refMin={54} isMax={false}/>
+      <ParamRow label="Volumen" value={params.volume} unit="mL" refMin={1.4} isMax={false}/>
+      {params.dfi>0&&<ParamRow label="DFI · Fragmentación ADN" value={params.dfi} unit="%" refMax={25} isMax={true}/>}
+      {/* Calculated */}
+      <div style={{marginTop:10,padding:"10px 12px",background:"var(--color-background-secondary)",borderRadius:8,display:"flex",gap:20,flexWrap:"wrap"}}>
+        <div><span style={{fontSize:10,color:"var(--color-text-secondary)"}}>Espermatozoides progresivos totales </span><span style={{fontSize:13,fontWeight:700,color:"#0066B3"}}>{(params.concentration*(params.progressiveMotility/100)).toFixed(1)} mill</span></div>
+        <div><span style={{fontSize:10,color:"var(--color-text-secondary)"}}>Espermatozoides totales </span><span style={{fontSize:13,fontWeight:700,color:"#0066B3"}}>{(params.concentration*params.volume).toFixed(1)} mill</span></div>
+      </div>
     </Card>
+
+    {/* Techniques */}
+    {techniques&&techniques.length>0&&<Card style={{marginBottom:14}}>
+      <div style={{fontSize:13,fontWeight:600,color:"var(--color-text-primary)",marginBottom:4}}>Técnicas recomendadas</div>
+      <div style={{fontSize:11,color:"var(--color-text-secondary)",marginBottom:14}}>Basado en parámetros OMS 2021 · Decisión final del especialista</div>
+      <div style={{display:"flex",flexDirection:"column",gap:8}}>
+        {techniques.map(t=>(
+          <div key={t.id} style={{display:"flex",gap:12,padding:"12px 14px",background:t.color+"0d",border:`0.5px solid ${t.color}30`,borderLeft:`3px solid ${t.color}`,borderRadius:8,alignItems:"flex-start"}}>
+            <span style={{fontSize:18,flexShrink:0}}>{t.icon}</span>
+            <div>
+              <div style={{fontSize:13,fontWeight:600,color:t.color,marginBottom:3}}>{t.label}</div>
+              <div style={{fontSize:11,color:"var(--color-text-secondary)",lineHeight:1.6}}>{t.desc}</div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </Card>}
+
+    {/* Clinical recs */}
+    <Card style={{marginBottom:14}}>
+      <div style={{fontSize:13,fontWeight:600,color:"var(--color-text-primary)",marginBottom:14}}>Observaciones clínicas</div>
+      {recs.map((r,i)=>(<div key={i} style={{display:"flex",gap:10,padding:"9px 0",borderBottom:i<recs.length-1?"0.5px solid var(--color-border-tertiary)":"none",fontSize:12,lineHeight:1.6,color:"var(--color-text-secondary)"}}>
+        <span style={{color:"#0066B3",flexShrink:0,marginTop:1}}>→</span>{r}
+      </div>))}
+    </Card>
+
     <div className="btn-row" style={{display:"flex",gap:8,flexWrap:"wrap"}}>
       {!saved&&<Btn onClick={onConfirm} disabled={saving}>{saving?"Guardando...":"💾 Guardar análisis"}</Btn>}
       {saved&&<span style={{color:"#22c55e",fontWeight:700,fontSize:13,padding:"9px 0"}}>✓ Guardado</span>}
-      <Btn variant="ghost" onClick={onNew}>Nuevo análisis</Btn>
+      <Btn variant="secondary" onClick={onNew}>Nuevo análisis</Btn>
     </div>
   </div>);
+}
+
+// ─── ANALYSIS DETAIL MODAL ───────────────────────────────────────────────────
+function AnalysisDetailModal({analysis:a,cid,onClose}){
+  const dc=diagColor(a.diagnosis,a.spermScore);
+  const abstDays=a.abstinenceDays!=null?parseInt(a.abstinenceDays):null;
+  const abstWarn=abstDays!==null&&(abstDays<2||abstDays>7);
+  return(<div onClick={e=>{if(e.target===e.currentTarget)onClose();}} style={{position:"fixed",inset:0,zIndex:10000,background:"rgba(15,23,42,0.5)",display:"flex",alignItems:"flex-start",justifyContent:"center",padding:"24px 16px",overflowY:"auto"}}>
+    <div style={{...s.card,maxWidth:640,width:"100%",background:"#fff",boxShadow:"0 24px 64px rgba(0,0,0,.2)",marginBottom:24}}>
+      {/* Modal header */}
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:18,paddingBottom:14,borderBottom:"0.5px solid var(--color-border-tertiary)"}}>
+        <div>
+          <div style={{fontSize:16,fontWeight:700}}>{a.patientFirstName} {a.patientLastName}</div>
+          <div style={{fontSize:11,color:"var(--color-text-secondary)",marginTop:3}}>
+            {a.procedureDate}{a.doctorName?" · "+a.doctorName:""}
+            {a.patientId&&<span style={{marginLeft:8,background:"var(--color-background-secondary)",padding:"1px 7px",borderRadius:6,fontFamily:"monospace",fontSize:10}}>ID: {a.patientId}</span>}
+            {a.sourceFile&&<span style={{marginLeft:8,background:"#f0fdf4",color:"#22c55e",padding:"1px 7px",borderRadius:6,fontSize:10,fontWeight:600}}>📄 IA</span>}
+          </div>
+        </div>
+        <div style={{display:"flex",gap:8,alignItems:"center"}}>
+          <button style={{...s.btnP,fontSize:12,padding:"6px 14px"}} onClick={()=>downloadPDF({...a,recommendations:a.recommendations||[]},cid)}>⬇ PDF</button>
+          <button onClick={onClose} style={{...s.btn,padding:"6px 10px",fontSize:16}}>×</button>
+        </div>
+      </div>
+      {/* Score + diagnosis */}
+      <div style={{display:"flex",gap:20,alignItems:"center",marginBottom:20,flexWrap:"wrap"}}>
+        <Gauge score={a.spermScore} size={96}/>
+        <div>
+          <Badge label={a.diagnosis} color={dc}/>
+          {abstDays!==null&&<div style={{marginTop:8,fontSize:11,color:abstWarn?"#f59e0b":"var(--color-text-secondary)"}}>
+            Abstinencia: {abstDays} días{abstWarn?" · ⚠ fuera del rango recomendado":" · ✓"}
+          </div>}
+          <div style={{fontSize:11,color:"var(--color-text-secondary)",marginTop:8,lineHeight:1.6,maxWidth:340}}>{a.aiNotes}</div>
+        </div>
+      </div>
+      {/* Params */}
+      <div style={{marginBottom:16}}>
+        <div style={{fontSize:12,fontWeight:600,marginBottom:10}}>Parámetros OMS 2021</div>
+        {[
+          {l:"Concentración",v:a.params?.concentration,u:"mill/mL",ref:"≥16",ok:(a.params?.concentration||0)>=16},
+          {l:"Motilidad Progresiva",v:a.params?.progressiveMotility,u:"%",ref:"≥30%",ok:(a.params?.progressiveMotility||0)>=30},
+          {l:"Motilidad Total",v:a.params?.totalMotility,u:"%",ref:"≥42%",ok:(a.params?.totalMotility||0)>=42},
+          {l:"Morfología Kruger",v:a.params?.morphology,u:"%",ref:"≥4%",ok:(a.params?.morphology||0)>=4},
+          {l:"Vitalidad",v:a.params?.vitality,u:"%",ref:"≥54%",ok:(a.params?.vitality||0)>=54},
+          {l:"Volumen",v:a.params?.volume,u:"mL",ref:"≥1.4 mL",ok:(a.params?.volume||0)>=1.4},
+          ...((a.params?.dfi>0)?[{l:"DFI",v:a.params?.dfi,u:"%",ref:"≤25%",ok:(a.params?.dfi||0)<=25}]:[]),
+        ].map(p=>(<div key={p.l} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"7px 0",borderBottom:"0.5px solid var(--color-border-tertiary)"}}>
+          <span style={{fontSize:12,color:"var(--color-text-secondary)"}}>{p.l}</span>
+          <div style={{display:"flex",gap:8,alignItems:"center"}}>
+            <span style={{fontSize:13,fontWeight:700,color:p.ok?"#22c55e":"#ef4444"}}>{p.v} {p.u}</span>
+            <span style={{fontSize:10,color:"var(--color-text-secondary)"}}>ref {p.ref}</span>
+          </div>
+        </div>))}
+      </div>
+      {/* Techniques */}
+      {(a.techniques||[]).length>0&&<div style={{marginBottom:16}}>
+        <div style={{fontSize:12,fontWeight:600,marginBottom:10}}>Técnicas recomendadas</div>
+        <div style={{display:"flex",flexDirection:"column",gap:6}}>
+          {(a.techniques||[]).map(t=>(<div key={t.id} style={{display:"flex",gap:10,padding:"10px 12px",background:t.color+"0d",border:`0.5px solid ${t.color}30`,borderLeft:`3px solid ${t.color}`,borderRadius:8}}>
+            <span style={{fontSize:16,flexShrink:0}}>{t.icon}</span>
+            <div><div style={{fontSize:12,fontWeight:600,color:t.color}}>{t.label}</div><div style={{fontSize:11,color:"var(--color-text-secondary)",marginTop:2,lineHeight:1.5}}>{t.desc}</div></div>
+          </div>))}
+        </div>
+      </div>}
+      {/* Recs */}
+      {(a.recommendations||[]).length>0&&<div>
+        <div style={{fontSize:12,fontWeight:600,marginBottom:10}}>Observaciones clínicas</div>
+        {(a.recommendations||[]).map((r,i)=>(<div key={i} style={{display:"flex",gap:8,padding:"7px 0",borderBottom:i<(a.recommendations.length-1)?"0.5px solid var(--color-border-tertiary)":"none",fontSize:11,color:"var(--color-text-secondary)",lineHeight:1.6}}>
+          <span style={{color:"#0066B3",flexShrink:0}}>→</span>{r}
+        </div>))}
+      </div>}
+    </div>
+  </div>);
+}
+
+// ─── CSV EXPORT ──────────────────────────────────────────────────────────────
+function exportCSV(analyses){
+  const headers=["ID","Paciente","ID Paciente","Fecha","Médico","Diagnóstico","SpermScore","Concentración (mill/mL)","Motilidad Progresiva (%)","Motilidad Total (%)","Morfología Kruger (%)","Vitalidad (%)","Volumen (mL)","DFI (%)","Abstinencia (días)","Fuente IA","Fecha creación"];
+  const rows=analyses.map(a=>[
+    a.id||"",
+    `${a.patientFirstName||""} ${a.patientLastName||""}`.trim(),
+    a.patientId||"",
+    a.procedureDate||"",
+    a.doctorName||"",
+    a.diagnosis||"",
+    a.spermScore??""  ,
+    a.params?.concentration??""  ,
+    a.params?.progressiveMotility??""  ,
+    a.params?.totalMotility??""  ,
+    a.params?.morphology??""  ,
+    a.params?.vitality??""  ,
+    a.params?.volume??""  ,
+    a.params?.dfi??""  ,
+    a.abstinenceDays??""  ,
+    a.sourceFile?"Sí":"No",
+    a.createdAt?.seconds?new Date(a.createdAt.seconds*1000).toLocaleDateString("es-AR"):a.createdAt?new Date(a.createdAt).toLocaleDateString("es-AR"):""
+  ]);
+  // Use tab separator to ensure each field is in its own column in Excel
+  const sep="	";
+  const bom="﻿";
+  const csv=bom+[headers,...rows].map(r=>r.map(v=>String(v).replace(/	/g," ")).join(sep)).join("
+");
+  const blob=new Blob([csv],{type:"text/tab-separated-values;charset=utf-8"});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement("a");a.href=url;a.download=`spermai_analisis_${new Date().toISOString().split("T")[0]}.xls`;a.click();URL.revokeObjectURL(url);
 }
 
 // ─── PORTAL TAB ───────────────────────────────────────────────────────────────
@@ -813,9 +1050,12 @@ function PortalTab({user,toast}){
   const[confirmPerm,setConfirmPerm]=useState(null);
   const[platformClinicsData,setPlatformClinicsData]=useState({});
   const[selectedClinic,setSelectedClinic]=useState(null);
+  const[detailAnalysis,setDetailAnalysis]=useState(null);
+  const[historyPatient,setHistoryPatient]=useState(null);
+  const[historyDetailAnalysis,setHistoryDetailAnalysis]=useState(null);
 
   useEffect(()=>{
-    setSelectedClinic(null);
+    setSelectedClinic(null);setDetailAnalysis(null);setHistoryPatient(null);setHistoryDetailAnalysis(null);
   },[subTab]);
 
   useEffect(()=>{(async()=>{
@@ -853,9 +1093,10 @@ function PortalTab({user,toast}){
       {[["analyses","Análisis"],["patients","Pacientes"],["deleted","🗑 Eliminados"],...(isMaster?[["clinics","🏥 Clínicas"]]:[])].map(([id,lbl])=>(
         <button key={id} onClick={()=>setSubTab(id)} style={{padding:"10px 18px",background:"none",border:"none",borderBottom:`3px solid ${subTab===id?(id==="deleted"?"#ef4444":id==="clinics"?"#0097A7":"#0066B3"):"transparent"}`,fontFamily:"Montserrat,sans-serif",fontSize:12,fontWeight:600,cursor:"pointer",color:subTab===id?(id==="deleted"?"#ef4444":id==="clinics"?"#0097A7":"#0066B3"):"#64748b",marginBottom:-2,whiteSpace:"nowrap"}}>{lbl}</button>
       ))}
-      {subTab!=="clinics"&&<div style={{flex:1,display:"flex",justifyContent:"flex-end",alignItems:"center",padding:"6px 0"}}>
+      {subTab!=="clinics"&&<div style={{flex:1,display:"flex",justifyContent:"flex-end",alignItems:"center",gap:8,padding:"6px 0"}}>
         <input className="sub-search" value={search} onChange={e=>setSearch(e.target.value)} placeholder="Buscar..."
           style={{padding:"7px 12px",border:"1.5px solid #d1dbe6",borderRadius:8,fontFamily:"Montserrat,sans-serif",fontSize:12,color:"#1a2332",background:"#fff",outline:"none",width:180}}/>
+        {subTab==="analyses"&&<button onClick={()=>exportCSV(analyses)} style={{...s.btn,fontSize:11,padding:"7px 12px",whiteSpace:"nowrap"}}>⬇ CSV</button>}
       </div>}
     </div>
 
@@ -877,22 +1118,9 @@ function PortalTab({user,toast}){
           </div>
         </div>
       );})}
-      {sel&&<div style={{background:"#fff",borderRadius:14,padding:20,boxShadow:"0 2px 12px rgba(0,102,179,.07)",border:"2px solid #0066B3",marginTop:4}}>
-        <div className="preview-header" style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:16,flexWrap:"wrap",gap:8}}>
-          <div><div style={{fontSize:15,fontWeight:800}}>{sel.patientFirstName} {sel.patientLastName}</div><div style={{fontSize:11,color:"#94a3b8",marginTop:2}}>{sel.procedureDate}{sel.doctorName?" · "+sel.doctorName:""}{sel.sourceFile?" · 📄 "+sel.sourceFile:""}</div></div>
-          <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-            <Btn size="sm" onClick={()=>downloadPDF({...sel,recommendations:sel.recommendations||[]},cid)}>⬇ Descargar PDF</Btn>
-            <Btn size="sm" variant="secondary" onClick={()=>setSelId(null)}>✕ Cerrar</Btn>
-          </div>
-        </div>
-        <div className="result-row" style={{display:"flex",gap:16,alignItems:"center",flexWrap:"wrap",marginBottom:16}}>
-          <Gauge score={sel.spermScore} size={96}/>
-          <div><Badge label={sel.diagnosis} color={diagColor(sel.diagnosis,sel.spermScore)}/><div style={{fontSize:11,color:"#4a5568",marginTop:8,lineHeight:1.6,maxWidth:320}}>{sel.aiNotes}</div></div>
-        </div>
-        <div style={{marginBottom:12}}><ParamBars params={sel.params||{}}/></div>
-        {(sel.recommendations||[]).map((r,i)=>(<div key={i} style={{display:"flex",gap:8,padding:"9px 11px",background:"#f0f4f8",borderRadius:8,marginBottom:6,fontSize:11,lineHeight:1.55}}><span style={{color:"#0066B3",flexShrink:0}}>→</span>{r}</div>))}
-      </div>}
     </div>}
+    {/* Analysis detail modal */}
+    {sel&&<AnalysisDetailModal analysis={sel} cid={cid} onClose={()=>setSelId(null)}/>}
 
     {/* PACIENTES */}
     {!loading&&subTab==="patients"&&<div>
