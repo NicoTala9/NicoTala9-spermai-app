@@ -648,8 +648,7 @@ function StepFile({onAIComplete,onSkip,onBack}){
         reader.onerror=rej;
         reader.readAsDataURL(file);
       });
-      // Server only accepts image mimetypes — send PDF as image/jpeg (server handles extraction)
-      const mimeType = (ft==="pdf" || !file.type || file.type==="application/pdf") ? "image/jpeg" : (file.type||"image/jpeg");
+      const mimeType = ft==="pdf" ? "application/pdf" : (file.type||"image/jpeg");
       setStepTxt("Consultando servidor IA...");
       const resp = await fetch("https://ferti-server.vercel.app/api/analyze/sperm", {
         method:"POST",
