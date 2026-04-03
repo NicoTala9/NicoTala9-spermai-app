@@ -979,9 +979,6 @@ function PortalTab({user,toast}){
   const[historyPatient,setHistoryPatient]=useState(null);
   const[historyDetailAnalysis,setHistoryDetailAnalysis]=useState(null);
   const[detailAnalysis,setDetailAnalysis]=useState(null);
-  const[detailAnalysis,setDetailAnalysis]=useState(null);
-  const[historyPatient,setHistoryPatient]=useState(null);
-  const[historyDetailAnalysis,setHistoryDetailAnalysis]=useState(null);
 
   useEffect(()=>{
     setSelectedClinic(null);setDetailAnalysis(null);setHistoryPatient(null);setHistoryDetailAnalysis(null);
