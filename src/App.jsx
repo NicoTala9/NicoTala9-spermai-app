@@ -482,15 +482,18 @@ function AnalysisTab({user,toast}){
   const[paramValues,setParamValues]=useState({concentration:"",progressiveMotility:"",totalMotility:"",morphology:"",vitality:"",volume:"",dfi:""});
   const[aiData,setAiData]=useState({});
   const[fromAI,setFromAI]=useState(false);
+  const[aiServerNotes,setAiServerNotes]=useState(null);
   const[sourceFile,setSourceFile]=useState(null);
   const[result,setResult]=useState(null);
   const[saving,setSaving]=useState(false);
   const[saved,setSaved]=useState(false);
   const[confirmSave,setConfirmSave]=useState(false);
 
-  function handleAIComplete(extracted,fileName){
+  function handleAIComplete(extracted,fileName,notes){
     const vals={};Object.entries(extracted).forEach(([k,v])=>{vals[k]=v.value||"";});
-    setParamValues(p=>({...p,...vals}));setAiData(extracted);setFromAI(true);setSourceFile(fileName);setStep(3);
+    setParamValues(p=>({...p,...vals}));setAiData(extracted);setFromAI(true);setSourceFile(fileName);
+    if(notes)setAiServerNotes(notes);
+    setStep(3);
   }
 
   function handleAnalyze(){
@@ -516,7 +519,7 @@ function AnalysisTab({user,toast}){
   function reset(){
     setStep(1);setPatient({id:"",firstName:"",lastName:"",dob:"",doctorName:"",procedureDate:new Date().toISOString().split("T")[0]});
     setParamValues({concentration:"",progressiveMotility:"",totalMotility:"",morphology:"",vitality:"",volume:"",dfi:""});
-    setAiData({});setFromAI(false);setSourceFile(null);setResult(null);setSaved(false);
+    setAiData({});setFromAI(false);setSourceFile(null);setResult(null);setSaved(false);setAiServerNotes(null);
     setPatientSuggestions([]);setShowSuggestions(false);
   }
 
@@ -535,7 +538,7 @@ function AnalysisTab({user,toast}){
       onSelectPatient={p=>setPatient(prev=>({...prev,id:p.id,firstName:p.firstName,lastName:p.lastName,dob:p.dateOfBirth||"",doctorName:p.doctorName||""}))}
       onNext={()=>{if(!patient.id.trim()||!patient.firstName||!patient.lastName||!patient.procedureDate)return;setStep(2);}}/>}
     {step===2&&<StepFile onAIComplete={handleAIComplete} onSkip={()=>{setFromAI(false);setStep(3);}} onBack={()=>setStep(1)}/>}
-    {step===3&&<StepParams values={paramValues} onChange={(k,v)=>setParamValues(p=>({...p,[k]:v}))} aiData={aiData} fromAI={fromAI} onNext={handleAnalyze} onBack={()=>setStep(2)}/>}
+    {step===3&&<StepParams values={paramValues} onChange={(k,v)=>setParamValues(p=>({...p,[k]:v}))} aiData={aiData} fromAI={fromAI} aiNotes={aiServerNotes} onNext={handleAnalyze} onBack={()=>setStep(2)}/>}
     {step===4&&result&&<StepResult result={result} patient={patient} sourceFile={sourceFile} onSave={handleSave} onConfirm={()=>setConfirmSave(true)} onNew={reset} saving={saving} saved={saved}/>}
   </div>);
 }
@@ -608,18 +611,60 @@ function StepPatient({data,onChange,cid,suggestions,setSuggestions,showSuggestio
   </Card>);
 }
 
+// Convierte confidence del server al formato interno conf
+function serverToConf(confidence, value) {
+  if (value === null || value === undefined || confidence === "low") return "missing";
+  if (confidence === "medium") return "warn";
+  return "ok";
+}
+
+// Normaliza respuesta del servidor al formato { key: { value, conf } }
+function normalizeServerResponse(data) {
+  const PARAM_KEYS = ["concentration","progressiveMotility","totalMotility","morphology","vitality","volume","dfi"];
+  const result = {};
+  for (const key of PARAM_KEYS) {
+    const raw = data[key];
+    if (!raw) { result[key] = { value:"", conf:"missing" }; continue; }
+    const conf = serverToConf(raw.confidence, raw.value);
+    result[key] = { value: raw.value !== null && raw.value !== undefined ? String(raw.value) : "", conf };
+  }
+  return result;
+}
+
 function StepFile({onAIComplete,onSkip,onBack}){
-  const[file,setFile]=useState(null);const[ft,setFt]=useState(null);const[loading,setLoading]=useState(false);const[stepTxt,setStepTxt]=useState("");
-  function processFile(f){const ext=f.name.split(".").pop().toLowerCase();setFile(f);setFt(["pdf"].includes(ext)?"pdf":["jpg","jpeg","png"].includes(ext)?"image":"video");}
-  function run(){
-    setLoading(true);
-    const steps=ft==="video"?["Extrayendo frames del video","Analizando motilidad espermática","Calculando parámetros cinemáticos","Generando resultados"]:["Leyendo documento","Identificando parámetros OMS","Extrayendo valores numéricos","Verificando unidades y rangos"];
-    let i=0;const iv=setInterval(()=>{setStepTxt(steps[Math.min(i,steps.length-1)]);i++;if(i>steps.length){clearInterval(iv);
-      const r=ft==="video"
-        ?{concentration:{value:"18.4",conf:"ok"},progressiveMotility:{value:"20.1",conf:"warn"},totalMotility:{value:"35.2",conf:"ok"},morphology:{value:"",conf:"missing"},vitality:{value:"",conf:"missing"},volume:{value:"2.1",conf:"ok"},dfi:{value:"",conf:"missing"}}
-        :{concentration:{value:"24.0",conf:"ok"},progressiveMotility:{value:"20.0",conf:"warn"},totalMotility:{value:"38.0",conf:"ok"},morphology:{value:"6.0",conf:"ok"},vitality:{value:"62.0",conf:"ok"},volume:{value:"2.3",conf:"ok"},dfi:{value:"22.0",conf:"warn"}};
-      setLoading(false);onAIComplete(r,file.name);
-    }},700);
+  const[file,setFile]=useState(null);const[ft,setFt]=useState(null);const[loading,setLoading]=useState(false);const[stepTxt,setStepTxt]=useState("");const[aiError,setAiError]=useState(null);
+  function processFile(f){const ext=f.name.split(".").pop().toLowerCase();setFile(f);setFt(["pdf"].includes(ext)?"pdf":["jpg","jpeg","png"].includes(ext)?"image":"video");setAiError(null);}
+
+  async function run(){
+    setLoading(true);setAiError(null);
+    const steps=["Leyendo archivo","Identificando parámetros OMS","Extrayendo valores","Verificando resultados"];
+    let si=0;
+    const iv=setInterval(()=>{setStepTxt(steps[Math.min(si,steps.length-1)]);si++;},900);
+    try {
+      // Convert file to base64
+      const base64 = await new Promise((res,rej)=>{
+        const reader=new FileReader();
+        reader.onload=()=>res(reader.result.split(",")[1]);
+        reader.onerror=rej;
+        reader.readAsDataURL(file);
+      });
+      const mimeType = ft==="pdf" ? "application/pdf" : (file.type||"image/jpeg");
+      setStepTxt("Consultando servidor IA...");
+      const resp = await fetch("https://ferti-server.vercel.app/api/analyze/sperm", {
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({base64, mimeType}),
+      });
+      if(!resp.ok) throw new Error(`Error del servidor (${resp.status})`);
+      const data = await resp.json();
+      clearInterval(iv);
+      setLoading(false);
+      onAIComplete(normalizeServerResponse(data), file.name, data.notes||null);
+    } catch(err) {
+      clearInterval(iv);
+      setLoading(false);
+      setAiError(err.message||"Error al conectar con el servidor IA.");
+    }
   }
   const icons={pdf:"📄",image:"🖼️",video:"🎬"};
   return(<Card>
@@ -654,6 +699,14 @@ function StepFile({onAIComplete,onSkip,onBack}){
         <Btn variant="secondary" onClick={onBack}>← Atrás</Btn><Btn onClick={run}>✨ Analizar con IA</Btn>
       </div>
     </div>)}
+    {aiError&&<div style={{background:"#fef2f2",border:"1.5px solid #fca5a5",borderRadius:10,padding:"12px 14px",marginTop:12,display:"flex",gap:10,alignItems:"flex-start"}}>
+      <span style={{fontSize:18,flexShrink:0}}>⚠️</span>
+      <div>
+        <div style={{fontSize:12,fontWeight:700,color:"#dc2626",marginBottom:3}}>Error en la extracción IA</div>
+        <div style={{fontSize:11,color:"#7f1d1d"}}>{aiError}</div>
+        <button onClick={()=>setAiError(null)} style={{marginTop:8,background:"none",border:"none",fontSize:11,color:"#0066B3",cursor:"pointer",fontWeight:600,textDecoration:"underline",padding:0}}>Intentar de nuevo</button>
+      </div>
+    </div>}
     {loading&&<div style={{background:"#eef4fc",border:"1.5px solid #b5d4f4",borderRadius:12,padding:20,textAlign:"center",marginTop:14}}>
       <div style={{width:36,height:36,border:"3px solid #e2e8f0",borderTopColor:"#0066B3",borderRadius:"50%",margin:"0 auto 10px"}} className="ai-spin"/>
       <div style={{fontSize:12,fontWeight:700,color:"#0066B3"}}>Analizando con IA...</div>
@@ -665,7 +718,7 @@ function StepFile({onAIComplete,onSkip,onBack}){
   </Card>);
 }
 
-function StepParams({values,onChange,aiData,fromAI,onNext,onBack}){
+function StepParams({values,onChange,aiData,fromAI,aiNotes,onNext,onBack}){
   const miss=fromAI?PARAMS_LIST.filter(p=>aiData[p.key]?.conf==="missing").length:0;
   const warn=fromAI?PARAMS_LIST.filter(p=>aiData[p.key]?.conf==="warn").length:0;
   return(<Card>
@@ -681,6 +734,9 @@ function StepParams({values,onChange,aiData,fromAI,onNext,onBack}){
     {fromAI&&(miss>0||warn>0)&&<div style={{background:"#fffbeb",border:"1.5px solid #f59e0b",borderRadius:10,padding:"10px 14px",marginBottom:14,fontSize:11,color:"#92400e",fontWeight:600,display:"flex",alignItems:"center",gap:8}}>
       <span style={{fontSize:16,flexShrink:0}}>⚠️</span>
       <span>La IA encontró: {[miss>0&&`${miss} no detectado${miss>1?"s":""}`,warn>0&&`${warn} con baja confianza`].filter(Boolean).join(" y ")}. Revisá los campos marcados.</span>
+    </div>}
+    {fromAI&&aiNotes&&<div style={{background:"#f0f4f8",border:"0.5px solid var(--color-border-secondary)",borderRadius:10,padding:"10px 14px",marginBottom:14,fontSize:11,color:"var(--color-text-secondary)",lineHeight:1.6}}>
+      <span style={{fontWeight:600,color:"var(--color-text-primary)"}}>📋 Observaciones del informe: </span>{aiNotes}
     </div>}
     <div className="grid2" style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"0 16px"}}>
       {PARAMS_LIST.map(p=>{
