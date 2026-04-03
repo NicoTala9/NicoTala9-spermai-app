@@ -114,8 +114,20 @@ async function saveAnalysis(cid, data) {
   }
 }
 async function getAnalyses(cid) {
-  try { const d=await getDB(); if(!d)throw 0; const s=await d.collection(clinicPath(cid,"analyses")).where("type","==","sperm").orderBy("createdAt","desc").get(); return s.docs.map(x=>({...x.data(),id:x.id})); }
-  catch { return JSON.parse(localStorage.getItem(`sperm_${cid}`)||"[]"); }
+  try {
+    const d=await getDB(); if(!d)throw 0;
+    const s=await d.collection(clinicPath(cid,"analyses")).where("type","==","sperm").get();
+    const arr=s.docs.map(x=>({...x.data(),id:x.id}));
+    // Sort in JS to avoid needing a composite Firestore index
+    return arr.sort((a,b)=>{
+      const ta=a.createdAt?.seconds||a.createdAt||0;
+      const tb=b.createdAt?.seconds||b.createdAt||0;
+      return tb-ta;
+    });
+  } catch(e) {
+    console.warn("getAnalyses fallback:",e);
+    return JSON.parse(localStorage.getItem(`sperm_${cid}`)||"[]");
+  }
 }
 async function softDeleteAnalysis(cid,id,data) {
   try { const d=await getDB(); if(!d)throw 0; await d.collection(clinicPath(cid,"deleted")).doc(id).set({...data,deletedAt:TS()}); await d.collection(clinicPath(cid,"analyses")).doc(id).delete(); }
@@ -432,6 +444,7 @@ function AnalysisTab({user,toast}){
   const[result,setResult]=useState(null);
   const[saving,setSaving]=useState(false);
   const[saved,setSaved]=useState(false);
+  const[confirmSave,setConfirmSave]=useState(false);
 
   function handleAIComplete(extracted,fileName){
     const vals={};Object.entries(extracted).forEach(([k,v])=>{vals[k]=v.value||"";});
@@ -466,6 +479,13 @@ function AnalysisTab({user,toast}){
   }
 
   return(<div style={{maxWidth:800,margin:"0 auto"}}>
+    {confirmSave&&<ConfirmModal
+      title="¿Guardar análisis?"
+      message={`Vas a guardar el análisis de ${patient.firstName} ${patient.lastName} (ID: ${patient.id}). Esta acción no se puede deshacer.`}
+      confirmText="Sí, guardar"
+      onConfirm={()=>{setConfirmSave(false);handleSave();}}
+      onClose={()=>setConfirmSave(false)}
+    />}
     <Stepper step={step}/>
     {step===1&&<StepPatient data={patient} onChange={(k,v)=>setPatient(p=>({...p,[k]:v}))} cid={cid}
       suggestions={patientSuggestions} setSuggestions={setPatientSuggestions}
@@ -474,7 +494,7 @@ function AnalysisTab({user,toast}){
       onNext={()=>{if(!patient.id.trim()||!patient.firstName||!patient.lastName||!patient.procedureDate)return;setStep(2);}}/>}
     {step===2&&<StepFile onAIComplete={handleAIComplete} onSkip={()=>{setFromAI(false);setStep(3);}} onBack={()=>setStep(1)}/>}
     {step===3&&<StepParams values={paramValues} onChange={(k,v)=>setParamValues(p=>({...p,[k]:v}))} aiData={aiData} fromAI={fromAI} onNext={handleAnalyze} onBack={()=>setStep(2)}/>}
-    {step===4&&result&&<StepResult result={result} patient={patient} sourceFile={sourceFile} onSave={handleSave} onNew={reset} saving={saving} saved={saved}/>}
+    {step===4&&result&&<StepResult result={result} patient={patient} sourceFile={sourceFile} onSave={handleSave} onConfirm={()=>setConfirmSave(true)} onNew={reset} saving={saving} saved={saved}/>}
   </div>);
 }
 
@@ -654,7 +674,7 @@ function StepParams({values,onChange,aiData,fromAI,onNext,onBack}){
   </Card>);
 }
 
-function StepResult({result,patient,sourceFile,onSave,onNew,saving,saved}){
+function StepResult({result,patient,sourceFile,onSave,onConfirm,onNew,saving,saved}){
   const{diagnosis,score,recs,aiNotes,params}=result,dc=diagColor(diagnosis,score);
   return(<div>
     {sourceFile&&<div style={{background:"#f0fdf4",border:"1.5px solid #bbf7d0",borderRadius:10,padding:"10px 14px",marginBottom:14,fontSize:11,color:"#166534",fontWeight:600,display:"flex",alignItems:"center",gap:8}}>✓ Parámetros extraídos de "{sourceFile}" por IA · Revisados y confirmados</div>}
@@ -674,7 +694,7 @@ function StepResult({result,patient,sourceFile,onSave,onNew,saving,saved}){
       {recs.map((r,i)=>(<div key={i} style={{display:"flex",gap:8,padding:"9px 11px",background:"#f0f4f8",borderRadius:8,marginBottom:6,fontSize:11,lineHeight:1.55}}><span style={{color:"#0066B3",flexShrink:0}}>→</span>{r}</div>))}
     </Card>
     <div className="btn-row" style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-      {!saved&&<Btn onClick={onSave} disabled={saving}>{saving?"Guardando...":"💾 Guardar análisis"}</Btn>}
+      {!saved&&<Btn onClick={onConfirm} disabled={saving}>{saving?"Guardando...":"💾 Guardar análisis"}</Btn>}
       {saved&&<span style={{color:"#22c55e",fontWeight:700,fontSize:13,padding:"9px 0"}}>✓ Guardado</span>}
       <Btn variant="ghost" onClick={onNew}>Nuevo análisis</Btn>
     </div>
