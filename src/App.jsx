@@ -1027,10 +1027,9 @@ function exportCSV(analyses){
     a.createdAt?.seconds?new Date(a.createdAt.seconds*1000).toLocaleDateString("es-AR"):a.createdAt?new Date(a.createdAt).toLocaleDateString("es-AR"):""
   ]);
   // Use tab separator to ensure each field is in its own column in Excel
-  const sep="	";
-  const bom="﻿";
-  const csv=bom+[headers,...rows].map(r=>r.map(v=>String(v).replace(/	/g," ")).join(sep)).join("
-");
+  const sep="\t";
+  const bom="\uFEFF";
+  const csv=bom+[headers,...rows].map(r=>r.map(v=>String(v).replace(/\t/g," ")).join(sep)).join("\n");
   const blob=new Blob([csv],{type:"text/tab-separated-values;charset=utf-8"});
   const url=URL.createObjectURL(blob);
   const a=document.createElement("a");a.href=url;a.download=`spermai_analisis_${new Date().toISOString().split("T")[0]}.xls`;a.click();URL.revokeObjectURL(url);
