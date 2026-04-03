@@ -59,6 +59,25 @@ const MASTER_ADMIN = { id:"__master__", username:"FertiAdmin", password:"Ferti20
 const CLINIC_ADMIN_CEGYR = { id:"__clinicadmin_cegyr__", username:"Laboratoriocegyr", password:"Labo2021", role:"clinicAdmin", displayName:"Administrador CEGYR", clinicId:"cegyr", permissions:{analysis:true,portal:true,stats:true,training:true,admin:true} };
 const CLINIC_ID = "cegyr";
 const clinicPath = (cid, sub) => `clinics/${cid}/${sub}`;
+
+// ─── MODULE CATALOG ───────────────────────────────────────────────────────────
+const ALL_MODULES = [
+  { id:"oocyte",     label:"OocyteAI Clinical", desc:"Análisis de ovocitos" },
+  { id:"sperm",      label:"SpermAI",           desc:"Análisis seminal OMS 2021" },
+  { id:"blastocyst", label:"BlastocystAI",      desc:"Evaluación de embriones D5-7" },
+  { id:"clinical",   label:"ClinicalAI",        desc:"Historia clínica reproductiva" },
+  { id:"ferti",      label:"FertiAI",           desc:"Análisis integral (requiere 2+ módulos)" },
+];
+const CONNECTION_CATALOG = [
+  { id:"sperm→oocyte",       source:"sperm",    consumer:"oocyte",     label:"SpermAI → OocyteAI",       desc:"Ajusta prob. fecundación y euploide según spermScore",     requires:["sperm","oocyte"] },
+  { id:"clinical→oocyte",    source:"clinical", consumer:"oocyte",     label:"ClinicalAI → OocyteAI",    desc:"AMH/AFC personalizan predicciones",                        requires:["clinical","oocyte"] },
+  { id:"clinical→sperm",     source:"clinical", consumer:"sperm",      label:"ClinicalAI → SpermAI",     desc:"Contexto clínico enriquece recomendaciones",               requires:["clinical","sperm"] },
+  { id:"oocyte→blastocyst",  source:"oocyte",   consumer:"blastocyst", label:"OocyteAI → BlastocystAI",  desc:"Cierra loop ovocito → embrión resultante",                 requires:["oocyte","blastocyst"] },
+  { id:"sperm→blastocyst",   source:"sperm",    consumer:"blastocyst", label:"SpermAI → BlastocystAI",   desc:"Calidad espermática en contexto embrionario",              requires:["sperm","blastocyst"] },
+  { id:"clinical→blastocyst",source:"clinical", consumer:"blastocyst", label:"ClinicalAI → BlastocystAI",desc:"Historia clínica completa en evaluación",                  requires:["clinical","blastocyst"] },
+];
+const MY_MODULE = "sperm";
+const MY_MODULE_LABEL = "SpermAI";
 const prefixUsername = (cid, u) => `${cid}_${u.trim().toLowerCase()}`;
 const stripPrefix = (cid, u) => { const p=cid+"_"; return u?.startsWith(p)?u.slice(p.length):u; };
 
@@ -404,8 +423,31 @@ function LoginScreen({onLogin}){
       if(username===MASTER_ADMIN.username&&password===MASTER_ADMIN.password){onLogin(MASTER_ADMIN);return;}
       if(username===CLINIC_ADMIN_CEGYR.username&&password===CLINIC_ADMIN_CEGYR.password){onLogin(CLINIC_ADMIN_CEGYR);return;}
       const clinics=await getPlatformClinics();
-      for(const c of clinics){if(c.clinicAdminUsername===username&&c.clinicAdminPassword===password){onLogin({id:`__clinicadmin_${c.id}__`,username:c.clinicAdminUsername,role:"clinicAdmin",displayName:c.clinicAdminDisplayName||c.name,clinicId:c.id,permissions:{analysis:true,portal:true,stats:true,training:true,admin:true}});return;}}
-      for(const cid of[CLINIC_ID,...clinics.map(c=>c.id)]){const users=await getUsers(cid);const u=users.find(x=>x.username===prefixUsername(cid,username)&&x.password===password);if(u){onLogin({...u,clinicId:cid});return;}}
+      // Clinic Admins dinámicos
+      for(const c of clinics){
+        if(c.clinicAdminUsername===username&&c.clinicAdminPassword===password){
+          // Gate de módulo
+          if(c.modules&&!c.modules.includes(MY_MODULE)){
+            setError(`Esta clínica no tiene acceso a ${MY_MODULE_LABEL}. Contacte al administrador de la plataforma.`);
+            setLoading(false);return;
+          }
+          onLogin({id:`__clinicadmin_${c.id}__`,username:c.clinicAdminUsername,role:"clinicAdmin",displayName:c.clinicAdminDisplayName||c.name,clinicId:c.id,permissions:{analysis:true,portal:true,stats:true,training:true,admin:true}});return;
+        }
+      }
+      // Usuarios normales
+      for(const cid of[CLINIC_ID,...clinics.map(c=>c.id)]){
+        const users=await getUsers(cid);
+        const u=users.find(x=>x.username===prefixUsername(cid,username)&&x.password===password);
+        if(u){
+          // Gate de módulo
+          const userClinicConfig=clinics.find(c=>c.id===u.clinicId||c.id===cid);
+          if(userClinicConfig&&userClinicConfig.modules&&!userClinicConfig.modules.includes(MY_MODULE)){
+            setError(`Esta clínica no tiene acceso a ${MY_MODULE_LABEL}. Contacte al administrador de la plataforma.`);
+            setLoading(false);return;
+          }
+          onLogin({...u,clinicId:cid});return;
+        }
+      }
       setError("Credenciales incorrectas.");
     }catch{setError("Error de conexión.");}finally{setLoading(false);}
   }
@@ -1080,7 +1122,7 @@ function AdminTab({user,toast}){
 function ClinicModal({clinic,onSave,onClose}){
   const ww=useWindowSize();const mob=ww<640;
   const isNew=!clinic;
-  const[form,setForm]=useState(()=>clinic||{id:"",name:"",location:"",clinicAdminUsername:"",clinicAdminPassword:"",clinicAdminDisplayName:"",modules:[],status:"active",createdAt:Date.now(),logoBase64:null});
+  const[form,setForm]=useState(()=>clinic?{...clinic,modules:clinic.modules||[],connections:clinic.connections||[]}:{id:"",name:"",location:"",clinicAdminUsername:"",clinicAdminPassword:"",clinicAdminDisplayName:"",modules:[],connections:[],status:"active",createdAt:Date.now(),logoBase64:null});
   const[err,setErr]=useState("");const[showPass,setShowPass]=useState(false);const[uploadingLogo,setUploadingLogo]=useState(false);
   const logoRef=useRef(null);
   const f=(k,v)=>setForm(p=>({...p,[k]:v}));
@@ -1134,6 +1176,62 @@ function ClinicModal({clinic,onSave,onClose}){
             </div>
           </div>
         </div>
+        <div style={{height:1,background:"var(--color-border-tertiary)"}}/>
+
+        {/* Módulos contratados */}
+        <div style={{marginBottom:14}}>
+          <label style={s.lbl}>Módulos contratados</label>
+          <div style={{display:"flex",flexDirection:"column",gap:8}}>
+            {ALL_MODULES.map(mod=>{
+              const checked=form.modules.includes(mod.id);
+              const isFerti=mod.id==="ferti";
+              const otherCount=form.modules.filter(m=>m!=="ferti").length;
+              const fertiDisabled=isFerti&&otherCount<2;
+              return(<label key={mod.id} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 12px",background:checked?"#f0f7ff":"var(--color-background-secondary)",border:`1px solid ${checked?"#0066B3":"var(--color-border-tertiary)"}`,borderRadius:8,cursor:fertiDisabled?"not-allowed":"pointer",opacity:fertiDisabled?.5:1,transition:"all .15s"}}>
+                <input type="checkbox" checked={checked} disabled={fertiDisabled} style={{accentColor:"#0066B3"}} onChange={()=>{
+                  let newMods=checked?form.modules.filter(m=>m!==mod.id):[...form.modules,mod.id];
+                  const nonFerti=newMods.filter(m=>m!=="ferti");
+                  if(nonFerti.length<2)newMods=newMods.filter(m=>m!=="ferti");
+                  const newConns=form.connections.filter(conn=>{
+                    const cat=CONNECTION_CATALOG.find(c=>c.source===conn.source&&c.consumer===conn.consumer);
+                    return cat&&cat.requires.every(r=>newMods.includes(r));
+                  });
+                  setForm(p=>({...p,modules:newMods,connections:newConns}));
+                }}/>
+                <div>
+                  <div style={{fontSize:13,fontWeight:600}}>{mod.label}</div>
+                  <div style={{fontSize:11,color:"var(--color-text-secondary)"}}>{mod.desc}</div>
+                </div>
+              </label>);
+            })}
+          </div>
+        </div>
+
+        {/* Conexiones entre módulos */}
+        {form.modules.filter(m=>m!=="ferti").length>=2&&(
+          <div style={{marginBottom:14}}>
+            <label style={s.lbl}>Conexiones entre módulos</label>
+            <div style={{fontSize:11,color:"var(--color-text-secondary)",marginBottom:8}}>Habilitan enriquecimiento cruzado de análisis entre módulos</div>
+            <div style={{display:"flex",flexDirection:"column",gap:6}}>
+              {CONNECTION_CATALOG.filter(cat=>cat.requires.every(r=>form.modules.includes(r))).map(cat=>{
+                const active=form.connections.find(c=>c.source===cat.source&&c.consumer===cat.consumer&&c.enabled);
+                return(<label key={cat.id} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 12px",background:active?"#f0fdf4":"var(--color-background-secondary)",border:`1px solid ${active?"#22c55e":"var(--color-border-tertiary)"}`,borderRadius:8,cursor:"pointer",transition:"all .15s"}}>
+                  <input type="checkbox" checked={!!active} style={{accentColor:"#22c55e"}} onChange={()=>{
+                    const newConns=active
+                      ?form.connections.filter(c=>!(c.source===cat.source&&c.consumer===cat.consumer))
+                      :[...form.connections,{source:cat.source,consumer:cat.consumer,enabled:true,activatedAt:new Date().toISOString()}];
+                    setForm(p=>({...p,connections:newConns}));
+                  }}/>
+                  <div>
+                    <div style={{fontSize:12,fontWeight:600}}>{cat.label}</div>
+                    <div style={{fontSize:11,color:"var(--color-text-secondary)"}}>{cat.desc}</div>
+                  </div>
+                </label>);
+              })}
+            </div>
+          </div>
+        )}
+
         {err&&<div style={{display:"flex",alignItems:"center",gap:8,padding:"10px 14px",background:"#fef2f2",border:"1px solid #fecaca",borderRadius:10,fontSize:13,color:"#dc2626"}}><span>⚠️</span>{err}</div>}
         <div style={{padding:"10px 14px",background:"#fffbeb",border:"0.5px solid #fde68a",borderRadius:10,fontSize:12,color:"#78350f",lineHeight:1.6}}>
           💡 Las credenciales del Clinic Admin se guardan en Firestore bajo <code style={{background:"#fef9c3",padding:"1px 4px",borderRadius:4}}>platformClinics/{form.id||"..."}</code>.
@@ -1160,7 +1258,7 @@ function MasterPanel({user,toast}){
     catch(e){toast.add("Error al eliminar: "+String(e?.message||e),"error");}
     setDelTarget(null);
   };
-  const FUNDACIONAL={id:"cegyr",name:"CEGYR",location:"Buenos Aires, AR",clinicAdminUsername:"Laboratoriocegyr",clinicAdminDisplayName:"Administrador CEGYR",modules:["SpermAI"],status:"active",hardcoded:true};
+  const FUNDACIONAL={id:"cegyr",name:"CEGYR",location:"Buenos Aires, AR",clinicAdminUsername:"Laboratoriocegyr",clinicAdminDisplayName:"Administrador CEGYR",modules:ALL_MODULES.map(m=>m.id),status:"active",hardcoded:true};
   const allClinics=[FUNDACIONAL,...Object.values(clinics).sort((a,b)=>(a.createdAt||0)-(b.createdAt||0))];
   return(<div style={{display:"flex",flexDirection:"column",gap:"1.5rem"}}>
     {/* Header */}
@@ -1192,6 +1290,9 @@ function MasterPanel({user,toast}){
                     <span style={{fontSize:10,padding:"2px 7px",background:"#dcfce7",color:"#166534",borderRadius:99,fontWeight:600}}>ACTIVA</span>
                     <span style={{fontSize:10,padding:"2px 7px",background:"var(--color-background-primary)",color:"var(--color-text-secondary)",borderRadius:99,border:"0.5px solid var(--color-border-secondary)"}}>ID: {clinic.id}</span>
                   </div>
+                  {(clinic.modules||[]).length>0&&<div style={{display:"flex",gap:4,flexWrap:"wrap",marginBottom:6}}>
+                    {(clinic.modules||[]).map(mid=>{const m=ALL_MODULES.find(x=>x.id===mid);return m?<span key={mid} style={{fontSize:9,padding:"2px 8px",background:mid===MY_MODULE?"#dbeafe":"#f1f5f9",color:mid===MY_MODULE?"#1e40af":"#475569",borderRadius:99,fontWeight:600,border:`0.5px solid ${mid===MY_MODULE?"#93c5fd":"#e2e8f0"}`}}>{m.label}</span>:null;})}
+                  </div>}
                   {clinic.location&&<p style={{fontSize:12,color:"var(--color-text-secondary)",margin:"0 0 8px"}}>{clinic.location}</p>}
                   <div style={{display:"flex",alignItems:"center",gap:8,padding:"8px 12px",background:"var(--color-background-primary)",borderRadius:8,border:"0.5px solid var(--color-border-tertiary)"}}>
                     <span style={{fontSize:14}}>👑</span>
