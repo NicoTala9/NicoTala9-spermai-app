@@ -151,6 +151,24 @@ async function deleteUser(cid,id) {
   try { const d=await getDB(); if(!d)throw 0; await d.collection(clinicPath(cid,"users")).doc(id).delete(); }
   catch { const key=`users_${cid}`; localStorage.setItem(key,JSON.stringify(JSON.parse(localStorage.getItem(key)||"[]").filter(u=>u.id!==id))); }
 }
+async function getPatients(cid) {
+  try { const d=await getDB(); if(!d)throw 0; const s=await d.collection(clinicPath(cid,"patients")).get(); return s.docs.map(x=>({...x.data(),id:x.id})); }
+  catch { return JSON.parse(localStorage.getItem(`patients_${cid}`)||"[]"); }
+}
+async function savePatient(cid, patient) {
+  try {
+    const d=await getDB(); if(!d)throw 0;
+    const ref=d.collection(clinicPath(cid,"patients")).doc(patient.id);
+    const existing=(await ref.get()).data()||{};
+    await ref.set({...patient, createdAt: existing.createdAt||Date.now(), lastUpdated: Date.now()}, {merge:true});
+  } catch {
+    const key=`patients_${cid}`; const arr=JSON.parse(localStorage.getItem(key)||"[]");
+    const i=arr.findIndex(p=>p.id===patient.id);
+    const item={...patient, createdAt: i>=0?arr[i].createdAt:Date.now(), lastUpdated: Date.now()};
+    if(i>=0)arr[i]=item; else arr.push(item);
+    localStorage.setItem(key,JSON.stringify(arr));
+  }
+}
 async function getPlatformClinics() {
   try { const d=await getDB(); if(!d)throw 0; const s=await d.collection("platformClinics").get(); return s.docs.map(x=>({...x.data(),id:x.id})); }
   catch { return JSON.parse(localStorage.getItem("platformClinics")||"[]"); }
@@ -404,7 +422,9 @@ function LoginScreen({onLogin}){
 function AnalysisTab({user,toast}){
   const cid=user.clinicId||CLINIC_ID;
   const[step,setStep]=useState(1);
-  const[patient,setPatient]=useState({firstName:"",lastName:"",dob:"",doctorName:"",procedureDate:new Date().toISOString().split("T")[0]});
+  const[patient,setPatient]=useState({id:"",firstName:"",lastName:"",dob:"",doctorName:"",procedureDate:new Date().toISOString().split("T")[0]});
+  const[patientSuggestions,setPatientSuggestions]=useState([]);
+  const[showSuggestions,setShowSuggestions]=useState(false);
   const[paramValues,setParamValues]=useState({concentration:"",progressiveMotility:"",totalMotility:"",morphology:"",vitality:"",volume:"",dfi:""});
   const[aiData,setAiData]=useState({});
   const[fromAI,setFromAI]=useState(false);
@@ -427,30 +447,91 @@ function AnalysisTab({user,toast}){
   async function handleSave(){
     if(!result)return;setSaving(true);
     try{
-      await saveAnalysis(cid,{patientFirstName:patient.firstName,patientLastName:patient.lastName,patientDob:patient.dob,doctorName:patient.doctorName,procedureDate:patient.procedureDate,createdBy:user.id,createdByName:user.displayName,params:result.params,diagnosis:result.diagnosis,spermScore:result.score,aiNotes:result.aiNotes,recommendations:result.recs,sourceFile:sourceFile||null,linkedOocyteAnalysisId:null});
+      const pid=patient.id.trim();
+      if(!pid){toast.add("El ID de paciente es obligatorio.","error");setSaving(false);return;}
+      // Save patient doc
+      await savePatient(cid,{id:pid,firstName:patient.firstName,lastName:patient.lastName,doctorName:patient.doctorName,dateOfBirth:patient.dob,clinicId:cid});
+      // Save analysis with patientId
+      await saveAnalysis(cid,{patientId:pid,patientFirstName:patient.firstName,patientLastName:patient.lastName,patientDob:patient.dob,doctorName:patient.doctorName,procedureDate:patient.procedureDate,createdBy:user.id,createdByName:user.displayName,params:result.params,diagnosis:result.diagnosis,spermScore:result.score,aiNotes:result.aiNotes,recommendations:result.recs,sourceFile:sourceFile||null,linkedOocyteAnalysisId:null});
       setSaved(true);toast.add("Análisis guardado correctamente.","success");
       setTimeout(()=>reset(),1200);
     }catch{toast.add("Error al guardar.","error");}finally{setSaving(false);}
   }
 
   function reset(){
-    setStep(1);setPatient({firstName:"",lastName:"",dob:"",doctorName:"",procedureDate:new Date().toISOString().split("T")[0]});
+    setStep(1);setPatient({id:"",firstName:"",lastName:"",dob:"",doctorName:"",procedureDate:new Date().toISOString().split("T")[0]});
     setParamValues({concentration:"",progressiveMotility:"",totalMotility:"",morphology:"",vitality:"",volume:"",dfi:""});
     setAiData({});setFromAI(false);setSourceFile(null);setResult(null);setSaved(false);
+    setPatientSuggestions([]);setShowSuggestions(false);
   }
 
   return(<div style={{maxWidth:800,margin:"0 auto"}}>
     <Stepper step={step}/>
-    {step===1&&<StepPatient data={patient} onChange={(k,v)=>setPatient(p=>({...p,[k]:v}))} onNext={()=>{if(!patient.firstName||!patient.lastName||!patient.procedureDate)return;setStep(2);}}/>}
+    {step===1&&<StepPatient data={patient} onChange={(k,v)=>setPatient(p=>({...p,[k]:v}))} cid={cid}
+      suggestions={patientSuggestions} setSuggestions={setPatientSuggestions}
+      showSuggestions={showSuggestions} setShowSuggestions={setShowSuggestions}
+      onSelectPatient={p=>setPatient(prev=>({...prev,id:p.id,firstName:p.firstName,lastName:p.lastName,dob:p.dateOfBirth||"",doctorName:p.doctorName||""}))}
+      onNext={()=>{if(!patient.id.trim()||!patient.firstName||!patient.lastName||!patient.procedureDate)return;setStep(2);}}/>}
     {step===2&&<StepFile onAIComplete={handleAIComplete} onSkip={()=>{setFromAI(false);setStep(3);}} onBack={()=>setStep(1)}/>}
     {step===3&&<StepParams values={paramValues} onChange={(k,v)=>setParamValues(p=>({...p,[k]:v}))} aiData={aiData} fromAI={fromAI} onNext={handleAnalyze} onBack={()=>setStep(2)}/>}
     {step===4&&result&&<StepResult result={result} patient={patient} sourceFile={sourceFile} onSave={handleSave} onNew={reset} saving={saving} saved={saved}/>}
   </div>);
 }
 
-function StepPatient({data,onChange,onNext}){
+function StepPatient({data,onChange,cid,suggestions,setSuggestions,showSuggestions,setShowSuggestions,onSelectPatient,onNext}){
+  const searchRef=useRef(null);
+
+  async function handleIdChange(val){
+    onChange("id",val);
+    if(val.trim().length<2){setSuggestions([]);setShowSuggestions(false);return;}
+    try{
+      const all=await getPatients(cid);
+      const q=val.trim().toLowerCase();
+      const matches=all.filter(p=>
+        p.id?.toLowerCase().includes(q)||
+        `${p.firstName} ${p.lastName}`.toLowerCase().includes(q)
+      ).slice(0,6);
+      setSuggestions(matches);setShowSuggestions(matches.length>0);
+    }catch{setSuggestions([]);setShowSuggestions(false);}
+  }
+
+  function selectSuggestion(p){
+    onSelectPatient(p);
+    setShowSuggestions(false);setSuggestions([]);
+  }
+
+  const canContinue=data.id.trim()&&data.firstName&&data.lastName&&data.procedureDate;
+
   return(<Card>
-    <div style={{fontSize:13,fontWeight:700,color:"#0066B3",marginBottom:14}}>Datos del Paciente</div>
+    <div style={{fontSize:13,fontWeight:600,color:"var(--color-text-primary)",marginBottom:14}}>Datos del Paciente</div>
+    {/* Patient ID with autocomplete */}
+    <div style={{marginBottom:14,position:"relative"}} ref={searchRef}>
+      <label style={s.lbl}>ID Paciente / DNI <span style={{color:"#ef4444"}}>*</span></label>
+      <input value={data.id} onChange={e=>handleIdChange(e.target.value)}
+        onFocus={()=>{if(suggestions.length>0)setShowSuggestions(true);}}
+        onBlur={()=>setTimeout(()=>setShowSuggestions(false),180)}
+        placeholder="Ej: 28123456" style={{...s.inp}}
+        onKeyDown={e=>{if(e.key==="Escape")setShowSuggestions(false);}}
+      />
+      {showSuggestions&&suggestions.length>0&&(
+        <div style={{position:"absolute",top:"100%",left:0,right:0,background:"#fff",border:"1px solid var(--color-border-secondary)",borderRadius:10,boxShadow:"0 8px 24px rgba(0,0,0,.12)",zIndex:500,maxHeight:220,overflowY:"auto"}}>
+          {suggestions.map(p=>(
+            <div key={p.id} onMouseDown={()=>selectSuggestion(p)}
+              style={{padding:"10px 14px",cursor:"pointer",borderBottom:"0.5px solid var(--color-border-tertiary)",display:"flex",gap:10,alignItems:"center"}}
+              onMouseEnter={e=>e.currentTarget.style.background="#f0f7ff"}
+              onMouseLeave={e=>e.currentTarget.style.background=""}>
+              <div style={{width:32,height:32,borderRadius:"50%",background:"#0066B310",color:"#0066B3",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700,flexShrink:0}}>
+                {(p.firstName?.[0]||"")+(p.lastName?.[0]||"")}
+              </div>
+              <div>
+                <div style={{fontSize:13,fontWeight:600}}>{p.lastName}, {p.firstName}</div>
+                <div style={{fontSize:11,color:"var(--color-text-secondary)"}}>ID: {p.id}{p.doctorName?" · "+p.doctorName:""}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
     <div className="grid2" style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"0 16px"}}>
       <Field label="Nombre" value={data.firstName} onChange={v=>onChange("firstName",v)} required/>
       <Field label="Apellido" value={data.lastName} onChange={v=>onChange("lastName",v)} required/>
@@ -458,7 +539,10 @@ function StepPatient({data,onChange,onNext}){
       <Field label="Médico Solicitante" value={data.doctorName} onChange={v=>onChange("doctorName",v)} placeholder="Dr/a..."/>
       <Field label="Fecha de Procedimiento" type="date" value={data.procedureDate} onChange={v=>onChange("procedureDate",v)} required/>
     </div>
-    <div className="btn-row" style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:12}}><Btn onClick={onNext}>Continuar →</Btn></div>
+    {!canContinue&&<div style={{fontSize:11,color:"var(--color-text-secondary)",marginBottom:8}}>* ID Paciente, Nombre, Apellido y Fecha de Procedimiento son obligatorios.</div>}
+    <div className="btn-row" style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:12}}>
+      <Btn onClick={onNext} disabled={!canContinue}>Continuar →</Btn>
+    </div>
   </Card>);
 }
 
@@ -695,11 +779,17 @@ function PortalTab({user,toast}){
     {/* PACIENTES */}
     {!loading&&subTab==="patients"&&<div>
       {(()=>{
-        const grouped={};analyses.forEach(a=>{const k=`${a.patientFirstName}||${a.patientLastName}`;if(!grouped[k])grouped[k]={fn:a.patientFirstName,ln:a.patientLastName,doctor:a.doctorName,list:[]};grouped[k].list.push(a);});
-        const pts=Object.values(grouped).filter(p=>`${p.fn} ${p.ln}`.toLowerCase().includes(q));
+        // Group by patientId (fallback to firstName+lastName for legacy analyses)
+        const grouped={};
+        analyses.forEach(a=>{
+          const k=a.patientId||`${a.patientFirstName}||${a.patientLastName}`;
+          if(!grouped[k])grouped[k]={pid:a.patientId||null,fn:a.patientFirstName,ln:a.patientLastName,doctor:a.doctorName,list:[]};
+          grouped[k].list.push(a);
+        });
+        const pts=Object.values(grouped).filter(p=>`${p.fn} ${p.ln} ${p.pid||""}`.toLowerCase().includes(q));
         const colors=["#0066B3","#0097A7","#7c3aed","#dc2626","#d97706","#059669"];
         if(!pts.length)return<Card style={{textAlign:"center",padding:48,color:"#94a3b8"}}><div style={{fontSize:32,marginBottom:8}}>👤</div><div style={{fontWeight:600}}>No hay pacientes</div></Card>;
-        return pts.map((p,pi)=><PatientCard key={pi} patient={p} color={colors[pi%colors.length]} onSelect={(id)=>{setSubTab("analyses");setSelId(id);}}/>);
+        return pts.map((p,pi)=><PatientCard key={p.pid||pi} patient={p} color={colors[pi%colors.length]} onSelect={(id)=>{setSubTab("analyses");setSelId(id);}}/>);
       })()}
     </div>}
 
@@ -736,7 +826,7 @@ function PortalTab({user,toast}){
       allCids.forEach(id=>{
         const info=platformClinicsData[id]||{};
         const cAnalyses=analyses.filter(a=>(a.clinicId||CLINIC_ID)===id);
-        const patients=new Set(cAnalyses.map(a=>`${a.patientFirstName}||${a.patientLastName}`)).size;
+        const patients=new Set(cAnalyses.map(a=>a.patientId||`${a.patientFirstName}||${a.patientLastName}`)).size;
         clinicMap[id]={id,name:id===CLINIC_ID?"CEGYR":(info.name||id),location:info.location||"",logoBase64:info.logoBase64||null,analyses:cAnalyses,patients};
       });
       const clinicList=Object.values(clinicMap).filter(c=>c.analyses.length>0||c.id===CLINIC_ID);
@@ -832,7 +922,13 @@ function PatientCard({patient,color,onSelect}){
     <div style={{display:"flex",alignItems:"center",gap:12,justifyContent:"space-between",flexWrap:"wrap"}}>
       <div style={{display:"flex",alignItems:"center",gap:12}}>
         <div style={{width:44,height:44,borderRadius:"50%",background:color+"18",color,display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,fontWeight:800,flexShrink:0}}>{init}</div>
-        <div><div style={{fontSize:14,fontWeight:800}}>{patient.ln}, {patient.fn}</div><div style={{fontSize:11,color:"#94a3b8",marginTop:2}}>{patient.doctor||""}</div></div>
+        <div>
+          <div style={{fontSize:14,fontWeight:800}}>{patient.ln}, {patient.fn}</div>
+          <div style={{fontSize:11,color:"#94a3b8",marginTop:2}}>
+            {patient.pid&&<span style={{background:"#f0f4f8",padding:"1px 7px",borderRadius:8,fontFamily:"monospace",marginRight:6}}>ID: {patient.pid}</span>}
+            {patient.doctor||""}
+          </div>
+        </div>
       </div>
       <button onClick={()=>setOpen(!open)} style={{background:"#f0f4f8",border:"none",borderRadius:8,padding:"7px 14px",fontSize:11,fontWeight:700,color:"#0066B3",cursor:"pointer"}}>{open?"Cerrar ↑":"Ver historial →"}</button>
     </div>
