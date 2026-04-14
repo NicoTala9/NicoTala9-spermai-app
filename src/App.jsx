@@ -1421,45 +1421,144 @@ function PatientHistoryModal({patient,onClose,onOpenDetail}){
 // ─── REAL OUTCOME MODAL ───────────────────────────────────────────────────────
 function RealOutcomeModal({analysis,cid,onClose,toast}){
   const a=analysis;
-  const[form,setForm]=useState({procedure:"",fertilizationRate:"",pregnancy:"pending",notes:""});
+  const[form,setForm]=useState({
+    procedure:"",
+    oocytesInseminated:"",   // ovocitos inseminados/inyectados
+    oocytesFertilized:"",    // fecundados correctamente (2PN)
+    blastocysts:"",          // llegaron a blastocisto D5/6/7
+    pregnancy:"pending",
+    linkedOocyteAnalysisId: a.linkedOocyteAnalysisId||"",
+    notes:""
+  });
   const[saving,setSaving]=useState(false);
   const f=(k,v)=>setForm(p=>({...p,[k]:v}));
+
+  // Tasas calculadas en tiempo real
+  const insemN=parseInt(form.oocytesInseminated)||0;
+  const fertN=parseInt(form.oocytesFertilized)||0;
+  const blastoN=parseInt(form.blastocysts)||0;
+  const fertRate=insemN>0?Math.round((fertN/insemN)*100):null;
+  const blastoRate=fertN>0?Math.round((blastoN/fertN)*100):null;
+
   async function save(){
     if(!form.procedure){toast.add("Seleccioná el procedimiento","error");return;}
+    if(form.oocytesFertilized&&form.oocytesInseminated&&parseInt(form.oocytesFertilized)>parseInt(form.oocytesInseminated)){
+      toast.add("Los fecundados no pueden ser más que los inseminados","error");return;
+    }
+    if(form.blastocysts&&form.oocytesFertilized&&parseInt(form.blastocysts)>parseInt(form.oocytesFertilized)){
+      toast.add("Los blastos no pueden ser más que los fecundados (2PN)","error");return;
+    }
     setSaving(true);
     try{
-      const outcome={procedure:form.procedure,fertilizationRate:form.fertilizationRate?parseFloat(form.fertilizationRate):null,pregnancy:form.pregnancy,notes:form.notes,confirmedBy:a.createdBy||"",confirmedAt:new Date().toISOString()};
+      const outcome={
+        procedure:form.procedure,
+        oocytesInseminated:insemN||null,
+        oocytesFertilized:fertN||null,
+        fertilizationRate:fertRate,
+        blastocysts:blastoN||null,
+        blastocystRate:blastoRate,
+        pregnancy:form.pregnancy,
+        linkedOocyteAnalysisId:form.linkedOocyteAnalysisId||null,
+        notes:form.notes,
+        confirmedBy:a.createdBy||"",
+        confirmedAt:new Date().toISOString(),
+        // Smart Prompting data point
+        spermScore:a.spermScore,
+        diagnosis:a.diagnosis,
+        params:a.params,
+      };
       await saveRealOutcome(cid,a.id,outcome);
-      toast.add("Resultado confirmado","success");onClose(outcome);
+      toast.add("Resultado confirmado","success");
+      onClose(outcome);
     }catch{toast.add("Error al guardar","error");}finally{setSaving(false);}
   }
-  return(<div onClick={e=>{if(e.target===e.currentTarget)onClose(null);}} style={{position:"fixed",inset:0,zIndex:10002,background:"rgba(15,23,42,0.5)",display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
-    <div style={{...s.card,maxWidth:480,width:"100%",background:"#fff",boxShadow:"0 24px 64px rgba(0,0,0,.2)"}}>
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
-        <div><div style={{fontSize:15,fontWeight:700}}>Confirmar resultado real</div><div style={{fontSize:11,color:"var(--color-text-secondary)",marginTop:2}}>{a.patientFirstName} {a.patientLastName} · {a.procedureDate}</div></div>
+
+  const showEmbryo=form.procedure==="FIV convencional"||form.procedure==="ICSI";
+
+  return(<div onClick={e=>{if(e.target===e.currentTarget)onClose(null);}} style={{position:"fixed",inset:0,zIndex:10002,background:"rgba(15,23,42,0.5)",display:"flex",alignItems:"center",justifyContent:"center",padding:16,overflowY:"auto"}}>
+    <div style={{...s.card,maxWidth:520,width:"100%",background:"#fff",boxShadow:"0 24px 64px rgba(0,0,0,.2)",margin:"auto"}}>
+      {/* Header */}
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:20}}>
+        <div>
+          <div style={{fontSize:15,fontWeight:700}}>Confirmar resultado del ciclo</div>
+          <div style={{fontSize:11,color:"var(--color-text-secondary)",marginTop:2}}>{a.patientFirstName} {a.patientLastName} · {a.procedureDate}</div>
+          <div style={{marginTop:6,display:"flex",gap:6}}>
+            <Badge label={a.diagnosis} color={diagColor(a.diagnosis,a.spermScore)}/>
+            <Badge label={"Score "+a.spermScore} color={scoreColor(a.spermScore)}/>
+          </div>
+        </div>
         <button onClick={()=>onClose(null)} style={{...s.btn,padding:"4px 8px",fontSize:16}}>×</button>
       </div>
+
+      {/* Procedimiento */}
       <SField label="Procedimiento realizado" value={form.procedure} onChange={v=>f("procedure",v)} required>
         <option value="">Seleccionar...</option>
         {["IUI","FIV convencional","ICSI","Congelación","Ninguno"].map(p=><option key={p} value={p}>{p}</option>)}
       </SField>
-      {(form.procedure==="FIV convencional"||form.procedure==="ICSI")&&
-        <Field label="Tasa de fecundación real (%)" type="number" min={0} max={100} value={form.fertilizationRate} onChange={v=>f("fertilizationRate",v)} placeholder="Ej: 75" unit="%"/>}
+
+      {/* Datos embriológicos — solo FIV/ICSI */}
+      {showEmbryo&&<div>
+        <div style={{height:1,background:"var(--color-border-tertiary)",margin:"4px 0 14px"}}/>
+        <div style={{fontSize:11,fontWeight:600,color:"var(--color-text-secondary)",textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:12}}>Datos embriológicos</div>
+        <div className="grid2" style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:"0 12px"}}>
+          <Field label="Inseminados / inyectados" type="number" min={0} max={50}
+            value={form.oocytesInseminated} onChange={v=>f("oocytesInseminated",v)} placeholder="Ej: 8"
+            hint="Total al procedimiento"/>
+          <Field label="Fecundados (2PN)" type="number" min={0} max={50}
+            value={form.oocytesFertilized} onChange={v=>f("oocytesFertilized",v)} placeholder="Ej: 6"
+            hint="Fecundación normal"/>
+          <Field label="Blastocistos D5/6/7" type="number" min={0} max={50}
+            value={form.blastocysts} onChange={v=>f("blastocysts",v)} placeholder="Ej: 4"
+            hint="Llegaron a blasto"/>
+        </div>
+        {/* Tasas calculadas en tiempo real */}
+        {(insemN>0||fertN>0)&&<div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:14}}>
+          {fertRate!==null&&<div style={{background:fertRate>=70?"#f0fdf4":"fertRate">=50?"#fffbeb":"#fef2f2",borderRadius:8,padding:"10px 12px",textAlign:"center"}}>
+            <div style={{fontSize:20,fontWeight:800,color:fertRate>=70?"#22c55e":fertRate>=50?"#f59e0b":"#ef4444"}}>{fertRate}%</div>
+            <div style={{fontSize:10,color:"var(--color-text-secondary)",marginTop:1}}>Tasa de fecundación</div>
+            <div style={{fontSize:9,color:"var(--color-text-secondary)"}}>{fertN} de {insemN} inseminados</div>
+          </div>}
+          {blastoRate!==null&&<div style={{background:blastoRate>=50?"#f0fdf4":"#fef2f2",borderRadius:8,padding:"10px 12px",textAlign:"center"}}>
+            <div style={{fontSize:20,fontWeight:800,color:blastoRate>=50?"#22c55e":"#ef4444"}}>{blastoRate}%</div>
+            <div style={{fontSize:10,color:"var(--color-text-secondary)",marginTop:1}}>Tasa de blastocisto</div>
+            <div style={{fontSize:9,color:"var(--color-text-secondary)"}}>{blastoN} de {fertN} fecundados</div>
+          </div>}
+        </div>}
+        <div style={{height:1,background:"var(--color-border-tertiary)",margin:"0 0 14px"}}/>
+      </div>}
+
+      {/* Vincular con ciclo OocyteAI */}
+      <div style={{marginBottom:14}}>
+        <label style={s.lbl}>Vincular con ciclo OocyteAI (opcional)</label>
+        <input value={form.linkedOocyteAnalysisId} onChange={e=>f("linkedOocyteAnalysisId",e.target.value)}
+          placeholder="ID del análisis OocyteAI del mismo ciclo"
+          style={{...s.inp,fontFamily:"monospace",fontSize:12}}/>
+        <div style={{fontSize:10,color:"var(--color-text-secondary)",marginTop:3}}>
+          Permite cruzar datos del espermograma con los ovocitos del mismo ciclo para Smart Prompting
+        </div>
+      </div>
+
+      {/* Embarazo */}
       <SField label="Resultado de embarazo" value={form.pregnancy} onChange={v=>f("pregnancy",v)}>
         <option value="pending">Pendiente</option>
-        <option value="yes">Embarazo confirmado</option>
+        <option value="yes">Embarazo confirmado ✓</option>
         <option value="no">No hubo embarazo</option>
       </SField>
+
+      {/* Notas */}
       <div style={{marginBottom:14}}>
         <label style={s.lbl}>Notas del embriólogo</label>
-        <textarea value={form.notes} onChange={e=>f("notes",e.target.value)} rows={3} style={{...s.inp,resize:"vertical"}} placeholder="Observaciones clínicas..."/>
+        <textarea value={form.notes} onChange={e=>f("notes",e.target.value)} rows={3}
+          style={{...s.inp,resize:"vertical"}} placeholder="Respuesta ovocitaria, observaciones del laboratorio, condiciones de la muestra..."/>
       </div>
-      <div style={{padding:"10px 12px",background:"#f0f7ff",borderRadius:8,fontSize:11,color:"#0066B3",marginBottom:16}}>
-        💡 Estos datos alimentarán el Smart Prompting futuro para mejorar las recomendaciones de la IA.
+
+      {/* Smart Prompting note */}
+      <div style={{padding:"10px 12px",background:"#f0f7ff",borderRadius:8,fontSize:11,color:"#0066B3",marginBottom:16,lineHeight:1.6}}>
+        💡 <strong>Smart Prompting:</strong> Estos datos se usarán para calibrar las recomendaciones de la IA con estadísticas reales de tu clínica.
+        {/* TODO: const clinicStats = await getClinicSpermStats(clinicId); */}
+        {/* Inyectar en prompt: tasas reales de blastocisto por diagnóstico, procedimiento óptimo según parámetros */}
       </div>
-      {/* TODO: Smart Prompting - inyectar estadísticas de la clínica */}
-      {/* const clinicStats = await getClinicSpermStats(clinicId); */}
-      {/* Agregar al prompt: "Datos de referencia de esta clínica: {clinicStats}" */}
+
       <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
         <button style={{...s.btn,fontSize:13}} onClick={()=>onClose(null)}>Cancelar</button>
         <button style={{...s.btnP,fontSize:13}} onClick={save} disabled={saving}>{saving?"Guardando...":"Confirmar resultado"}</button>
