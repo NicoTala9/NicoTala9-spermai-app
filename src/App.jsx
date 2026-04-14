@@ -182,6 +182,41 @@ async function deleteUser(cid,id) {
   try { const d=await getDB(); if(!d)throw 0; await d.collection(clinicPath(cid,"users")).doc(id).delete(); }
   catch { const key=`users_${cid}`; localStorage.setItem(key,JSON.stringify(JSON.parse(localStorage.getItem(key)||"[]").filter(u=>u.id!==id))); }
 }
+async function saveIcsiSession(cid, session) {
+  try {
+    const d=await getDB(); if(!d)throw 0;
+    const col=d.collection(`clinics/${cid}/icsiSessions`);
+    const ref=session.id?col.doc(session.id):col.doc();
+    const item={...session,id:ref.id,type:"icsi_selection",clinicId:cid,updatedAt:TS()};
+    if(!session.id)item.createdAt=TS();
+    await ref.set(item,{merge:true}); return item;
+  } catch {
+    const key=`icsi_${cid}`; const arr=JSON.parse(localStorage.getItem(key)||"[]");
+    const item={...session,id:session.id||`icsi_${Date.now()}`,type:"icsi_selection",clinicId:cid,createdAt:session.createdAt||new Date().toISOString(),updatedAt:new Date().toISOString()};
+    const i=arr.findIndex(a=>a.id===item.id); if(i>=0)arr[i]=item; else arr.unshift(item);
+    localStorage.setItem(key,JSON.stringify(arr)); return item;
+  }
+}
+async function getIcsiSessions(cid) {
+  try {
+    const d=await getDB(); if(!d)throw 0;
+    const s=await d.collection(`clinics/${cid}/icsiSessions`).where("type","==","icsi_selection").get();
+    return s.docs.map(x=>({...x.data(),id:x.id})).sort((a,b)=>{
+      const ta=a.createdAt?.seconds||a.createdAt||0, tb=b.createdAt?.seconds||b.createdAt||0;
+      return tb-ta;
+    });
+  } catch { return JSON.parse(localStorage.getItem(`icsi_${cid}`)||"[]"); }
+}
+async function saveRealOutcome(cid, analysisId, outcome) {
+  try {
+    const d=await getDB(); if(!d)throw 0;
+    await d.collection(clinicPath(cid,"analyses")).doc(analysisId).set({realOutcome:outcome,updatedAt:TS()},{merge:true});
+  } catch {
+    const key=`sperm_${cid}`; const arr=JSON.parse(localStorage.getItem(key)||"[]");
+    const i=arr.findIndex(a=>a.id===analysisId); if(i>=0){arr[i]={...arr[i],realOutcome:outcome}; localStorage.setItem(key,JSON.stringify(arr));}
+  }
+}
+
 async function getPatients(cid) {
   try { const d=await getDB(); if(!d)throw 0; const s=await d.collection(clinicPath(cid,"patients")).get(); return s.docs.map(x=>({...x.data(),id:x.id})); }
   catch { return JSON.parse(localStorage.getItem(`patients_${cid}`)||"[]"); }
@@ -979,6 +1014,7 @@ function PortalTab({user,toast}){
   const[historyPatient,setHistoryPatient]=useState(null);
   const[historyDetailAnalysis,setHistoryDetailAnalysis]=useState(null);
   const[detailAnalysis,setDetailAnalysis]=useState(null);
+  const[icsiSessions,setIcsiSessions]=useState([]);
 
   useEffect(()=>{
     setSelectedClinic(null);setDetailAnalysis(null);setHistoryPatient(null);setHistoryDetailAnalysis(null);
@@ -986,8 +1022,8 @@ function PortalTab({user,toast}){
 
   useEffect(()=>{(async()=>{
     setLoading(true);
-    const[a,d]=await Promise.all([getAnalyses(cid),getDeletedAnalyses(cid)]);
-    setAnalyses(a);setDeleted(d);
+    const[a,d,icsi]=await Promise.all([getAnalyses(cid),getDeletedAnalyses(cid),getIcsiSessions(cid)]);
+    setAnalyses(a);setDeleted(d);setIcsiSessions(icsi);
     if(isMaster){
       try{const cls=await getPlatformClinics();const map={};cls.forEach(c=>{map[c.id]=c;});setPlatformClinicsData(map);}catch{}
     }
@@ -1016,8 +1052,8 @@ function PortalTab({user,toast}){
 
     {/* Sub-nav */}
     <div className="portal-search-row" style={{display:"flex",alignItems:"center",borderBottom:"2px solid #e2e8f0",marginBottom:20,gap:0,flexWrap:"wrap"}}>
-      {[["analyses","Análisis"],["patients","Pacientes"],["deleted","🗑 Eliminados"],...(isMaster?[["clinics","🏥 Clínicas"]]:[])].map(([id,lbl])=>(
-        <button key={id} onClick={()=>setSubTab(id)} style={{padding:"10px 18px",background:"none",border:"none",borderBottom:`3px solid ${subTab===id?(id==="deleted"?"#ef4444":id==="clinics"?"#0097A7":"#0066B3"):"transparent"}`,fontFamily:"Montserrat,sans-serif",fontSize:12,fontWeight:600,cursor:"pointer",color:subTab===id?(id==="deleted"?"#ef4444":id==="clinics"?"#0097A7":"#0066B3"):"#64748b",marginBottom:-2,whiteSpace:"nowrap"}}>{lbl}</button>
+      {[["analyses","Análisis"],["patients","Pacientes"],["icsi_sessions","🎯 Sesiones ICSI"],["deleted","🗑 Eliminados"],...(isMaster?[["clinics","🏥 Clínicas"]]:[])].map(([id,lbl])=>(
+        <button key={id} onClick={()=>setSubTab(id)} style={{padding:"10px 18px",background:"none",border:"none",borderBottom:`3px solid ${subTab===id?(id==="deleted"?"#ef4444":id==="clinics"?"#0097A7":id==="icsi_sessions"?"#7c3aed":"#0066B3"):"transparent"}`,fontFamily:"Montserrat,sans-serif",fontSize:12,fontWeight:600,cursor:"pointer",color:subTab===id?(id==="deleted"?"#ef4444":id==="clinics"?"#0097A7":"#0066B3"):"#64748b",marginBottom:-2,whiteSpace:"nowrap"}}>{lbl}</button>
       ))}
       {subTab!=="clinics"&&<div style={{flex:1,display:"flex",justifyContent:"flex-end",alignItems:"center",gap:8,padding:"6px 0"}}>
         <input className="sub-search" value={search} onChange={e=>setSearch(e.target.value)} placeholder="Buscar..."
@@ -1048,9 +1084,9 @@ function PortalTab({user,toast}){
       );})}
     </div>}
     {/* Analysis detail modal */}
-    {detailAnalysis&&<AnalysisDetailModal analysis={detailAnalysis} cid={cid} onClose={()=>setDetailAnalysis(null)}/>}
+    {detailAnalysis&&<AnalysisDetailModal analysis={detailAnalysis} cid={cid} onClose={()=>setDetailAnalysis(null)} toast={toast}/>}
     {historyPatient&&<PatientHistoryModal patient={historyPatient} onClose={()=>{setHistoryPatient(null);setHistoryDetailAnalysis(null);}} onOpenDetail={a=>setHistoryDetailAnalysis(a)}/>}
-    {historyDetailAnalysis&&<AnalysisDetailModal analysis={historyDetailAnalysis} cid={cid} onClose={()=>setHistoryDetailAnalysis(null)}/>}
+    {historyDetailAnalysis&&<AnalysisDetailModal analysis={historyDetailAnalysis} cid={cid} onClose={()=>setHistoryDetailAnalysis(null)} toast={toast}/>}
 
     {/* PACIENTES */}
     {!loading&&subTab==="patients"&&<div>
@@ -1070,6 +1106,35 @@ function PortalTab({user,toast}){
           />)}
         </div>);
       })()}
+    </div>}
+
+    {/* SESIONES ICSI */}
+    {!loading&&subTab==="icsi_sessions"&&<div>
+      {!icsiSessions.length
+        ?<Card style={{textAlign:"center",padding:48,color:"#94a3b8"}}><div style={{fontSize:32,marginBottom:8}}>🎯</div><div style={{fontWeight:600}}>No hay sesiones ICSI registradas</div></Card>
+        :icsiSessions.map(sess=>(
+          <Card key={sess.id} style={{marginBottom:12}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexWrap:"wrap",gap:8}}>
+              <div>
+                <div style={{fontSize:13,fontWeight:600}}>{sess.patientFirstName} {sess.patientLastName}</div>
+                <div style={{fontSize:11,color:"var(--color-text-secondary)",marginTop:2}}>{sess.sessionDate} · {sess.magnification} · {sess.completedSlots}/{sess.totalSlots} slots</div>
+              </div>
+              <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                <Badge label={`${sess.stats?.aiConcordance||0}% concordancia`} color="#7c3aed"/>
+                <Badge label={`Score prom: ${sess.stats?.avgMorphScore||0}`} color="#0066B3"/>
+              </div>
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(100px,1fr))",gap:8,marginTop:12}}>
+              {[["Slots",`${sess.completedSlots}/${sess.totalSlots}`,"#0066B3"],["MorphScore",sess.stats?.avgMorphScore||0,"#0097A7"],["Concordancia IA",(sess.stats?.aiConcordance||0)+"%","#7c3aed"]].map(([l,v,c])=>(
+                <div key={l} style={{background:"var(--color-background-secondary)",borderRadius:8,padding:"8px 10px",textAlign:"center"}}>
+                  <div style={{fontSize:16,fontWeight:700,color:c}}>{v}</div>
+                  <div style={{fontSize:9,color:"var(--color-text-secondary)",marginTop:1}}>{l}</div>
+                </div>
+              ))}
+            </div>
+          </Card>
+        ))
+      }
     </div>}
 
     {/* ELIMINADOS */}
@@ -1221,11 +1286,14 @@ function PatientCard({patient,color,onOpenHistory}){
 }
 
 // ─── ANALYSIS DETAIL MODAL ───────────────────────────────────────────────────
-function AnalysisDetailModal({analysis:a,cid,onClose}){
-  const dc=diagColor(a.diagnosis,a.spermScore),sc=scoreColor(a.spermScore);
-  const abstDays=a.abstinenceDays?parseInt(a.abstinenceDays):null;
+function AnalysisDetailModal({analysis:a,cid,onClose,toast}){
+  const[localA,setLocalA]=useState(a);
+  const[showOutcome,setShowOutcome]=useState(false);
+  const dc=diagColor(localA.diagnosis,localA.spermScore),sc=scoreColor(localA.spermScore);
+  const abstDays=localA.abstinenceDays?parseInt(localA.abstinenceDays):null;
   const abstWarn=abstDays!==null&&(abstDays<2||abstDays>7);
   return(<div onClick={e=>{if(e.target===e.currentTarget)onClose();}} style={{position:"fixed",inset:0,zIndex:10000,background:"rgba(15,23,42,0.55)",display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+    {showOutcome&&toast&&<RealOutcomeModal analysis={localA} cid={cid} toast={toast} onClose={outcome=>{setShowOutcome(false);if(outcome)setLocalA(p=>({...p,realOutcome:outcome}));}}/>}
     <div style={{background:"#fff",borderRadius:20,width:"100%",maxWidth:680,maxHeight:"92vh",overflowY:"auto",boxShadow:"0 24px 64px rgba(0,0,0,.2)"}}>
       {/* Header */}
       <div style={{padding:"18px 24px",borderBottom:"0.5px solid var(--color-border-tertiary)",display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:12}}>
@@ -1239,8 +1307,10 @@ function AnalysisDetailModal({analysis:a,cid,onClose}){
             {a.sourceFile&&<span style={{background:"#f0fdf4",color:"#22c55e",padding:"1px 7px",borderRadius:6,fontSize:10,fontWeight:600}}>📄 IA</span>}
           </div>
         </div>
-        <div style={{display:"flex",gap:8,flexShrink:0}}>
-          <button style={{...s.btnP,fontSize:12,padding:"7px 14px"}} onClick={()=>downloadPDF({...a,recommendations:a.recommendations||[]},cid)}>⬇ PDF</button>
+        <div style={{display:"flex",gap:6,flexShrink:0,flexWrap:"wrap",justifyContent:"flex-end"}}>
+          {toast&&!localA.realOutcome&&<button style={{...s.btn,fontSize:11,padding:"5px 10px",color:"#0097A7",borderColor:"#0097A7"}} onClick={()=>setShowOutcome(true)}>✓ Confirmar resultado</button>}
+          {localA.realOutcome&&<span style={{fontSize:10,padding:"3px 10px",borderRadius:20,background:"#dcfce7",color:"#166534",fontWeight:600,display:"flex",alignItems:"center"}}>✓ {localA.realOutcome.procedure}</span>}
+          <button style={{...s.btnP,fontSize:12,padding:"7px 14px"}} onClick={()=>downloadPDF({...localA,recommendations:localA.recommendations||[]},cid)}>⬇ PDF</button>
           <button style={{...s.btn,padding:"7px 12px",fontSize:18,lineHeight:1}} onClick={onClose}>×</button>
         </div>
       </div>
@@ -1348,21 +1418,293 @@ function PatientHistoryModal({patient,onClose,onOpenDetail}){
   </div>);
 }
 
+// ─── REAL OUTCOME MODAL ───────────────────────────────────────────────────────
+function RealOutcomeModal({analysis,cid,onClose,toast}){
+  const a=analysis;
+  const[form,setForm]=useState({procedure:"",fertilizationRate:"",pregnancy:"pending",notes:""});
+  const[saving,setSaving]=useState(false);
+  const f=(k,v)=>setForm(p=>({...p,[k]:v}));
+  async function save(){
+    if(!form.procedure){toast.add("Seleccioná el procedimiento","error");return;}
+    setSaving(true);
+    try{
+      const outcome={procedure:form.procedure,fertilizationRate:form.fertilizationRate?parseFloat(form.fertilizationRate):null,pregnancy:form.pregnancy,notes:form.notes,confirmedBy:a.createdBy||"",confirmedAt:new Date().toISOString()};
+      await saveRealOutcome(cid,a.id,outcome);
+      toast.add("Resultado confirmado","success");onClose(outcome);
+    }catch{toast.add("Error al guardar","error");}finally{setSaving(false);}
+  }
+  return(<div onClick={e=>{if(e.target===e.currentTarget)onClose(null);}} style={{position:"fixed",inset:0,zIndex:10002,background:"rgba(15,23,42,0.5)",display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+    <div style={{...s.card,maxWidth:480,width:"100%",background:"#fff",boxShadow:"0 24px 64px rgba(0,0,0,.2)"}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
+        <div><div style={{fontSize:15,fontWeight:700}}>Confirmar resultado real</div><div style={{fontSize:11,color:"var(--color-text-secondary)",marginTop:2}}>{a.patientFirstName} {a.patientLastName} · {a.procedureDate}</div></div>
+        <button onClick={()=>onClose(null)} style={{...s.btn,padding:"4px 8px",fontSize:16}}>×</button>
+      </div>
+      <SField label="Procedimiento realizado" value={form.procedure} onChange={v=>f("procedure",v)} required>
+        <option value="">Seleccionar...</option>
+        {["IUI","FIV convencional","ICSI","Congelación","Ninguno"].map(p=><option key={p} value={p}>{p}</option>)}
+      </SField>
+      {(form.procedure==="FIV convencional"||form.procedure==="ICSI")&&
+        <Field label="Tasa de fecundación real (%)" type="number" min={0} max={100} value={form.fertilizationRate} onChange={v=>f("fertilizationRate",v)} placeholder="Ej: 75" unit="%"/>}
+      <SField label="Resultado de embarazo" value={form.pregnancy} onChange={v=>f("pregnancy",v)}>
+        <option value="pending">Pendiente</option>
+        <option value="yes">Embarazo confirmado</option>
+        <option value="no">No hubo embarazo</option>
+      </SField>
+      <div style={{marginBottom:14}}>
+        <label style={s.lbl}>Notas del embriólogo</label>
+        <textarea value={form.notes} onChange={e=>f("notes",e.target.value)} rows={3} style={{...s.inp,resize:"vertical"}} placeholder="Observaciones clínicas..."/>
+      </div>
+      <div style={{padding:"10px 12px",background:"#f0f7ff",borderRadius:8,fontSize:11,color:"#0066B3",marginBottom:16}}>
+        💡 Estos datos alimentarán el Smart Prompting futuro para mejorar las recomendaciones de la IA.
+      </div>
+      {/* TODO: Smart Prompting - inyectar estadísticas de la clínica */}
+      {/* const clinicStats = await getClinicSpermStats(clinicId); */}
+      {/* Agregar al prompt: "Datos de referencia de esta clínica: {clinicStats}" */}
+      <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
+        <button style={{...s.btn,fontSize:13}} onClick={()=>onClose(null)}>Cancelar</button>
+        <button style={{...s.btnP,fontSize:13}} onClick={save} disabled={saving}>{saving?"Guardando...":"Confirmar resultado"}</button>
+      </div>
+    </div>
+  </div>);
+}
+
+// ─── ICSI TAB ─────────────────────────────────────────────────────────────────
+function IcsiTab({user,toast}){
+  const cid=user.clinicId||CLINIC_ID;
+  const[step,setStep]=useState(1);
+  const[session,setSession]=useState({patientId:"",patientFirstName:"",patientLastName:"",sessionDate:new Date().toISOString().split("T")[0],magnification:"40X",totalSlots:8});
+  const[sugg,setSugg]=useState([]);const[showSug,setShowSug]=useState(false);
+  const[slots,setSlots]=useState([]);const[curSlot,setCurSlot]=useState(0);
+  const[img,setImg]=useState(null);const[analyzing,setAnalyzing]=useState(false);
+  const[spermRes,setSpermRes]=useState([]);const[selSperm,setSelSperm]=useState(null);
+  const[saving,setSaving]=useState(false);
+
+  async function searchPat(val){
+    setSession(p=>({...p,patientId:val,patientFirstName:"",patientLastName:""}));
+    if(val.length<2){setSugg([]);setShowSug(false);return;}
+    try{const all=await getPatients(cid);const q=val.toLowerCase();const m=all.filter(p=>p.id?.toLowerCase().includes(q)||`${p.firstName} ${p.lastName}`.toLowerCase().includes(q)).slice(0,6);setSugg(m);setShowSug(m.length>0);}catch{}
+  }
+  function pickPat(p){setSession(prev=>({...prev,patientId:p.id,patientFirstName:p.firstName,patientLastName:p.lastName}));setShowSug(false);setSugg([]);}
+
+  function startSess(){
+    if(!session.patientFirstName){toast.add("Seleccioná un paciente","error");return;}
+    setSlots(Array.from({length:parseInt(session.totalSlots)||8},(_,i)=>({slotNumber:i+1,status:"pending",selectedId:null,morphScoreSelected:null,aiRecommendedId:null,spermDetected:[]})));
+    setCurSlot(0);setStep(2);
+  }
+
+  function runAnalysis(){
+    setAnalyzing(true);
+    setTimeout(()=>{
+      const num=Math.floor(Math.random()*6)+3;
+      const res=Array.from({length:num},(_,i)=>{
+        const h=Math.floor(Math.random()*40)+60,m=Math.floor(Math.random()*30)+70,t=Math.floor(Math.random()*25)+75;
+        const ms=Math.round(h*.5+m*.25+t*.25);
+        return{id:`sperm_${i+1}`,label:`Esp.${i+1}`,position:{x:Math.random()*70+10,y:Math.random()*70+10},
+          morphology:{head:{shape:h>80?"Oval normal":h>60?"Lev. piriforme":"Amorfo",score:h},midpiece:{status:m>80?"Alineada <1μm":"Lev. engrosada",score:m},vacuoles:{status:h>85?"Ausentes":h>70?"Peq. <2":"Gdes. >2",score:h>70?90:50},tail:{status:t>80?"Recta ~45μm":"Lev. curvada",score:t}},
+          morphScore:ms,classification:ms>80?"Normal (Kruger)":ms>60?"Borderline":"Anormal",
+          recommendation:ms>80?"Recomendado":ms>60?"Aceptable":"No recomendado"};
+      }).sort((a,b)=>b.morphScore-a.morphScore);
+      // TODO: Reemplazar simulación con fetch real:
+      // const response = await fetch("https://ferti-server.vercel.app/api/analyze/sperm-select", {
+      //   method: "POST", headers: { "Content-Type": "application/json" },
+      //   body: JSON.stringify({ base64: imageBase64, mimeType, magnification: session.magnification }),
+      // });
+      setSpermRes(res);setSelSperm(null);setAnalyzing(false);
+    },1800);
+  }
+
+  function confirmSel(){
+    if(!selSperm){toast.add("Seleccioná un espermatozoide","error");return;}
+    const best=spermRes[0];
+    const upd=[...slots];
+    upd[curSlot]={...upd[curSlot],status:"done",selectedId:selSperm.id,morphScoreSelected:selSperm.morphScore,aiRecommendedId:best.id,selectedByEmbryologist:selSperm.id===best.id,spermDetected:spermRes};
+    setSlots(upd);
+    if(curSlot<slots.length-1){setCurSlot(curSlot+1);setImg(null);setSpermRes([]);setSelSperm(null);}
+    else setStep(4);
+  }
+
+  async function saveSess(){
+    setSaving(true);
+    try{
+      const done=slots.filter(s=>s.status==="done");
+      const conc=done.length?Math.round((done.filter(s=>s.selectedByEmbryologist).length/done.length)*100):0;
+      const avg=done.length?Math.round(done.reduce((s,sl)=>s+(sl.morphScoreSelected||0),0)/done.length):0;
+      await saveIcsiSession(cid,{...session,totalSlots:parseInt(session.totalSlots)||8,completedSlots:done.length,selections:slots.map(sl=>({slotNumber:sl.slotNumber,aiRecommendedId:sl.aiRecommendedId||null,selectedById:sl.selectedId||null,selectedByEmbryologist:sl.selectedByEmbryologist||false,morphScoreSelected:sl.morphScoreSelected||null})),stats:{avgMorphScore:avg,aiConcordance:conc},createdBy:user.id,createdByName:user.displayName});
+      toast.add("Sesión ICSI guardada","success");
+      setStep(1);setSession({patientId:"",patientFirstName:"",patientLastName:"",sessionDate:new Date().toISOString().split("T")[0],magnification:"40X",totalSlots:8});
+      setSlots([]);setCurSlot(0);setImg(null);setSpermRes([]);setSelSperm(null);
+    }catch{toast.add("Error al guardar","error");}finally{setSaving(false);}
+  }
+
+  const recCol=r=>r==="Recomendado"?"#22c55e":r==="Aceptable"?"#f59e0b":"#ef4444";
+
+  return(<div style={{maxWidth:900,margin:"0 auto"}}>
+    <div style={{background:"#fffbeb",border:"0.5px solid #fde68a",borderRadius:10,padding:"8px 14px",marginBottom:16,fontSize:11,color:"#78350f",display:"flex",gap:8,alignItems:"center"}}>
+      <span>⚠️</span><span>Herramienta de apoyo clínico — la decisión final de selección espermática es del especialista.</span>
+    </div>
+    {/* Stepper */}
+    <div style={{display:"flex",alignItems:"center",marginBottom:22,overflowX:"auto"}}>
+      {["Configuración","Captura","Análisis","Resumen"].map((lbl,i)=>(<div key={i} style={{display:"flex",alignItems:"center",flex:i<3?1:"none"}}>
+        <div className="step-circle" style={{width:28,height:28,borderRadius:"50%",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700,flexShrink:0,background:step>i+1?"#22c55e":step===i+1?"#0066B3":"#e8edf2",color:step>=i+1?"#fff":"#94a3b8"}}>{step>i+1?"✓":i+1}</div>
+        <span className="step-label" style={{fontSize:10,fontWeight:600,marginLeft:6,whiteSpace:"nowrap",color:step===i+1?"#0066B3":step>i+1?"#22c55e":"#94a3b8"}}>{lbl}</span>
+        {i<3&&<div style={{flex:1,height:2,margin:"0 8px",minWidth:16,background:step>i+1?"#22c55e":"#e2e8f0"}}/>}
+      </div>))}
+    </div>
+
+    {/* STEP 1 */}
+    {step===1&&<Card>
+      <div style={{fontSize:13,fontWeight:600,marginBottom:16}}>Configuración de sesión ICSI</div>
+      <div style={{marginBottom:14,position:"relative"}}>
+        <label style={s.lbl}>Paciente <span style={{color:"#ef4444"}}>*</span></label>
+        <input value={session.patientId} onChange={e=>searchPat(e.target.value)} onBlur={()=>setTimeout(()=>setShowSug(false),180)} onFocus={()=>{if(sugg.length>0)setShowSug(true);}} placeholder="Buscar por ID o nombre..." style={s.inp}/>
+        {showSug&&sugg.length>0&&<div style={{position:"absolute",top:"100%",left:0,right:0,background:"#fff",border:"1px solid var(--color-border-secondary)",borderRadius:10,boxShadow:"0 8px 24px rgba(0,0,0,.12)",zIndex:500,maxHeight:200,overflowY:"auto"}}>
+          {sugg.map(p=>(<div key={p.id} onMouseDown={()=>pickPat(p)} style={{padding:"10px 14px",cursor:"pointer",borderBottom:"0.5px solid var(--color-border-tertiary)",display:"flex",gap:10,alignItems:"center"}} onMouseEnter={e=>e.currentTarget.style.background="#f0f7ff"} onMouseLeave={e=>e.currentTarget.style.background=""}>
+            <div style={{width:32,height:32,borderRadius:"50%",background:"#0066B310",color:"#0066B3",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700,flexShrink:0}}>{(p.firstName?.[0]||"")+(p.lastName?.[0]||"")}</div>
+            <div><div style={{fontSize:13,fontWeight:600}}>{p.lastName}, {p.firstName}</div><div style={{fontSize:11,color:"var(--color-text-secondary)"}}>ID: {p.id}</div></div>
+          </div>))}
+        </div>}
+        {session.patientFirstName&&<div style={{marginTop:6,fontSize:12,color:"#22c55e",fontWeight:600}}>✓ {session.patientFirstName} {session.patientLastName}</div>}
+      </div>
+      <div className="grid2" style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"0 16px"}}>
+        <Field label="Fecha de sesión" type="date" value={session.sessionDate} onChange={v=>setSession(p=>({...p,sessionDate:v}))} required/>
+        <Field label="Nº de ovocitos" type="number" min={1} max={20} value={session.totalSlots} onChange={v=>setSession(p=>({...p,totalSlots:v}))} required/>
+      </div>
+      <div style={{marginBottom:14}}>
+        <label style={s.lbl}>Aumento del microscopio</label>
+        <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+          {["40X","60X","100X"].map(m=>(<button key={m} onClick={()=>setSession(p=>({...p,magnification:m}))} style={{padding:"7px 16px",borderRadius:8,border:`1.5px solid ${session.magnification===m?"#0066B3":"var(--color-border-secondary)"}`,background:session.magnification===m?"#0066B3":"#fff",color:session.magnification===m?"#fff":"var(--color-text-primary)",fontSize:12,fontWeight:600,cursor:"pointer"}}>{m}{m==="40X"&&<span style={{fontSize:9,marginLeft:4,opacity:.7}}>estándar</span>}</button>))}
+        </div>
+      </div>
+      <div style={{marginBottom:16,display:"flex",alignItems:"center",gap:10,padding:"10px 14px",background:"var(--color-background-secondary)",borderRadius:8,opacity:.55,cursor:"not-allowed"}}>
+        <div style={{width:36,height:20,borderRadius:10,background:"#cbd5e1",position:"relative",flexShrink:0}}><div style={{width:16,height:16,borderRadius:"50%",background:"#fff",position:"absolute",top:2,left:2}}/></div>
+        <div><div style={{fontSize:12,fontWeight:500}}>Cámara en vivo</div><div style={{fontSize:10,color:"var(--color-text-secondary)"}}>Próximamente — conectá tu microscopio al sistema</div></div>
+      </div>
+      <div style={{display:"flex",justifyContent:"flex-end"}}><button style={s.btnP} onClick={startSess}>Iniciar sesión →</button></div>
+    </Card>}
+
+    {/* STEPS 2 & 3 */}
+    {(step===2||step===3)&&<div>
+      <div style={{display:"flex",gap:6,marginBottom:16,flexWrap:"wrap",alignItems:"center"}}>
+        {slots.map((sl,i)=>(<div key={i} style={{width:30,height:30,borderRadius:"50%",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700,background:sl.status==="done"?"#22c55e":i===curSlot?"#0066B3":"#e8edf2",color:sl.status==="done"||i===curSlot?"#fff":"#94a3b8",border:i===curSlot?"2px solid #0066B3":"none"}}>{i+1}</div>))}
+        <span style={{fontSize:11,color:"var(--color-text-secondary)",marginLeft:6}}>Ovocito {curSlot+1} de {slots.length}</span>
+      </div>
+      {!img&&<Card>
+        <div style={{fontSize:13,fontWeight:600,marginBottom:4}}>Captura del campo visual</div>
+        <div style={{fontSize:11,color:"var(--color-text-secondary)",marginBottom:14}}>Ovocito {curSlot+1} · {session.magnification}</div>
+        <div onClick={()=>document.getElementById("icsi-img-up").click()} onDragOver={e=>{e.preventDefault();e.currentTarget.style.borderColor="#0066B3";}} onDragLeave={e=>e.currentTarget.style.borderColor="#b0c4d8"} onDrop={e=>{e.preventDefault();if(e.dataTransfer.files[0]){setImg(e.dataTransfer.files[0]);setStep(3);}}} style={{border:"2px dashed #b0c4d8",borderRadius:14,padding:"40px 20px",textAlign:"center",cursor:"pointer",background:"#f8faff"}}>
+          <div style={{fontSize:36,marginBottom:10}}>🔬</div>
+          <div style={{fontSize:14,fontWeight:600,marginBottom:4}}>Subir imagen del campo visual</div>
+          <div style={{fontSize:11,color:"#94a3b8"}}>JPG o PNG del campo visual del microscopio</div>
+        </div>
+        <input id="icsi-img-up" type="file" accept="image/*" style={{display:"none"}} onChange={e=>{if(e.target.files[0]){setImg(e.target.files[0]);setStep(3);}}}/>
+      </Card>}
+      {img&&<Card>
+        <div style={{fontSize:13,fontWeight:600,marginBottom:4}}>Ovocito {curSlot+1} · {session.magnification}</div>
+        <div style={{fontSize:11,color:"var(--color-text-secondary)",marginBottom:12}}>{img.name}</div>
+        <div style={{position:"relative",borderRadius:10,overflow:"hidden",background:"#000",marginBottom:14,maxWidth:500}}>
+          <img src={URL.createObjectURL(img)} style={{width:"100%",display:"block",opacity:spermRes.length>0?.8:1}} alt="campo"/>
+          {spermRes.length>0&&<svg style={{position:"absolute",inset:0,width:"100%",height:"100%"}} viewBox="0 0 100 100" preserveAspectRatio="none">
+            {spermRes.map((sp,i)=>{
+              const col=sp.recommendation==="Recomendado"?"#22c55e":sp.recommendation==="Aceptable"?"#f59e0b":"#ef4444";
+              const sel=selSperm?.id===sp.id;
+              return(<g key={sp.id} style={{cursor:"pointer"}} onClick={()=>setSelSperm(sp)}>
+                <circle cx={sp.position.x} cy={sp.position.y} r={sel?4.5:3.5} fill={col} fillOpacity={sel?.9:.65} stroke="#fff" strokeWidth={sel?.8:.5}/>
+                <text x={sp.position.x+4} y={sp.position.y-3} fill="#fff" fontSize="3" fontWeight="bold">{i+1}</text>
+                {i===0&&<text x={sp.position.x-4} y={sp.position.y+7} fill="#22c55e" fontSize="3.5">★</text>}
+              </g>);
+            })}
+          </svg>}
+        </div>
+        {!spermRes.length&&!analyzing&&<button style={{...s.btnP,marginBottom:12}} onClick={runAnalysis}>🔬 Analizar campo visual</button>}
+        {analyzing&&<div style={{background:"#eef4fc",borderRadius:10,padding:16,textAlign:"center",marginBottom:12}}>
+          <div style={{width:32,height:32,border:"3px solid #e2e8f0",borderTopColor:"#0066B3",borderRadius:"50%",margin:"0 auto 8px"}} className="ai-spin"/>
+          <div style={{fontSize:12,fontWeight:600,color:"#0066B3"}}>Analizando espermatozoides...</div>
+        </div>}
+        {spermRes.length>0&&<div>
+          <div style={{fontSize:12,fontWeight:600,marginBottom:10}}>{spermRes.length} espermatozoides detectados · Seleccioná uno para inyectar</div>
+          <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:14}}>
+            {spermRes.map((sp,i)=>{
+              const col=recCol(sp.recommendation);const sel=selSperm?.id===sp.id;
+              return(<div key={sp.id} onClick={()=>setSelSperm(sp)} style={{display:"flex",alignItems:"center",gap:12,padding:"10px 14px",borderRadius:10,border:`1.5px solid ${sel?"#0066B3":col+"40"}`,background:sel?"#f0f7ff":col+"08",cursor:"pointer"}}>
+                <div style={{width:28,height:28,borderRadius:"50%",background:col,color:"#fff",display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:800,flexShrink:0}}>{i+1}</div>
+                <div style={{flex:1}}>
+                  <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:2}}>
+                    <span style={{fontSize:13,fontWeight:700,color:col}}>{sp.morphScore}</span>
+                    <span style={{fontSize:10,color:"var(--color-text-secondary)"}}>MorphScore</span>
+                    <span style={{fontSize:10,padding:"1px 8px",borderRadius:20,background:col+"18",color:col,fontWeight:600}}>{sp.recommendation}</span>
+                    {i===0&&<span style={{fontSize:9,padding:"1px 8px",borderRadius:20,background:"#0066B3",color:"#fff",fontWeight:700}}>MEJOR CANDIDATO</span>}
+                  </div>
+                  <div style={{fontSize:10,color:"var(--color-text-secondary)"}}>{sp.morphology.head.shape} · {sp.morphology.midpiece.status} · Vacuolas: {sp.morphology.vacuoles.status}</div>
+                </div>
+                {sel&&<div style={{width:20,height:20,borderRadius:"50%",background:"#0066B3",display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",fontSize:12,flexShrink:0}}>✓</div>}
+              </div>);
+            })}
+          </div>
+          <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
+            <button style={{...s.btn,fontSize:12}} onClick={()=>{setImg(null);setSpermRes([]);setSelSperm(null);}}>↩ Nueva imagen</button>
+            <button style={s.btnP} onClick={confirmSel} disabled={!selSperm}>{curSlot<slots.length-1?`Confirmar → Ovocito ${curSlot+2}`:"Ver resumen →"}</button>
+          </div>
+        </div>}
+      </Card>}
+    </div>}
+
+    {/* STEP 4: Summary */}
+    {step===4&&<Card>
+      <div style={{fontSize:15,fontWeight:700,marginBottom:4}}>Resumen de sesión ICSI</div>
+      <div style={{fontSize:11,color:"var(--color-text-secondary)",marginBottom:16}}>{session.patientFirstName} {session.patientLastName} · {session.sessionDate} · {session.magnification}</div>
+      {(()=>{
+        const done=slots.filter(s=>s.status==="done");
+        const conc=done.length?Math.round((done.filter(s=>s.selectedByEmbryologist).length/done.length)*100):0;
+        const avg=done.length?Math.round(done.reduce((s,sl)=>s+(sl.morphScoreSelected||0),0)/done.length):0;
+        return(<div>
+          <div className="kpi-grid" style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10,marginBottom:16}}>
+            {[[`${done.length}/${slots.length}`,"Slots completados","#0066B3"],[avg,"MorphScore prom.","#0097A7"],[conc+"%","Concordancia IA","#22c55e"]].map(([v,l,c])=>(
+              <div key={l} style={{background:"var(--color-background-secondary)",borderRadius:10,padding:12,textAlign:"center"}}>
+                <div style={{fontSize:22,fontWeight:800,color:c}}>{v}</div>
+                <div style={{fontSize:10,color:"var(--color-text-secondary)",marginTop:2}}>{l}</div>
+              </div>
+            ))}
+          </div>
+          {done.map(sl=>(<div key={sl.slotNumber} style={{display:"flex",alignItems:"center",gap:12,padding:"9px 0",borderBottom:"0.5px solid var(--color-border-tertiary)"}}>
+            <div style={{width:28,height:28,borderRadius:"50%",background:"#0066B310",color:"#0066B3",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700,flexShrink:0}}>#{sl.slotNumber}</div>
+            <div style={{flex:1}}><span style={{fontSize:12,fontWeight:600}}>MorphScore: {sl.morphScoreSelected}</span><span style={{marginLeft:8,fontSize:11,color:"var(--color-text-secondary)"}}>· {sl.selectedId}</span></div>
+            <span style={{fontSize:11,padding:"2px 8px",borderRadius:20,background:sl.selectedByEmbryologist?"#dcfce7":"#fef3c7",color:sl.selectedByEmbryologist?"#166534":"#92400e",fontWeight:600}}>{sl.selectedByEmbryologist?"✓ Concordó con IA":"↩ Eligió diferente"}</span>
+          </div>))}
+          <div style={{padding:"10px 14px",background:"#f0f7ff",borderRadius:8,fontSize:12,color:"#0066B3",margin:"14px 0"}}>
+            Concordancia embriólogo-IA: {conc}% · IA recomendó el mejor en {done.filter(s=>s.selectedByEmbryologist).length}/{done.length} casos
+          </div>
+          <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
+            <button style={{...s.btn,fontSize:13}} onClick={()=>{setStep(1);setSlots([]);setCurSlot(0);setImg(null);setSpermRes([]);setSelSperm(null);}}>Nueva sesión</button>
+            <button style={{...s.btnP,fontSize:13}} onClick={saveSess} disabled={saving}>{saving?"Guardando...":"💾 Guardar sesión ICSI"}</button>
+          </div>
+        </div>);
+      })()}
+    </Card>}
+  </div>);
+}
+
+
 // ─── STATS TAB ────────────────────────────────────────────────────────────────
 function StatsTab({user,toast}){
   const cid=user.clinicId||CLINIC_ID;
-  const[analyses,setAnalyses]=useState([]);const[loading,setLoading]=useState(true);
-  useEffect(()=>{(async()=>{setLoading(true);setAnalyses(await getAnalyses(cid));setLoading(false);})();},[cid]);
+  const[analyses,setAnalyses]=useState([]);const[icsiSessions,setIcsiSessions]=useState([]);const[loading,setLoading]=useState(true);
+  useEffect(()=>{(async()=>{setLoading(true);const[a,icsi]=await Promise.all([getAnalyses(cid),getIcsiSessions(cid)]);setAnalyses(a);setIcsiSessions(icsi);setLoading(false);})();},[cid]);
   if(loading)return<div style={{textAlign:"center",padding:60,color:"#94a3b8"}}>Cargando...</div>;
   if(!analyses.length)return<Card style={{textAlign:"center",padding:48,color:"#94a3b8"}}><div style={{fontSize:36,marginBottom:10}}>📊</div><div style={{fontWeight:600}}>Sin datos suficientes</div></Card>;
   const n=analyses.length,avg=Math.round(analyses.reduce((s,a)=>s+a.spermScore,0)/n),normalPct=Math.round((analyses.filter(a=>a.diagnosis==="Normal").length/n)*100),highDfi=analyses.filter(a=>(a.params?.dfi||0)>25).length;
   const counts={};analyses.forEach(a=>counts[a.diagnosis]=(counts[a.diagnosis]||0)+1);
+  const icsiCount=icsiSessions.length;
+  const icsiConcordance=icsiCount?Math.round(icsiSessions.reduce((s,sess)=>s+(sess.stats?.aiConcordance||0),0)/icsiCount):0;
   return(<div style={{maxWidth:900,margin:"0 auto"}}>
     <div className="kpi-grid" style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:10,marginBottom:14}}>
       {[[n,"🔬","Total análisis","#0066B3"],[avg,"⭐","SpermScore prom.",scoreColor(avg)],[`${normalPct}%`,"✅","Muestras normales","#22c55e"],[highDfi,"⚠️","DFI alto (>25%)","#ef4444"]].map(([v,ic,l,c])=>(
         <Card key={l} style={{textAlign:"center",padding:14}}><div style={{fontSize:22,marginBottom:4}}>{ic}</div><div style={{fontSize:24,fontWeight:800,color:c}}>{v}</div><div style={{fontSize:10,color:"#94a3b8",fontWeight:600}}>{l}</div></Card>
       ))}
     </div>
+    {icsiCount>0&&<div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:14}}>
+      <Card style={{textAlign:"center",padding:14}}><div style={{fontSize:22,marginBottom:4}}>🎯</div><div style={{fontSize:24,fontWeight:800,color:"#7c3aed"}}>{icsiCount}</div><div style={{fontSize:10,color:"#94a3b8",fontWeight:600}}>Sesiones ICSI</div></Card>
+      <Card style={{textAlign:"center",padding:14}}><div style={{fontSize:22,marginBottom:4}}>🤝</div><div style={{fontSize:24,fontWeight:800,color:icsiConcordance>=70?"#22c55e":"#f59e0b"}}>{icsiConcordance}%</div><div style={{fontSize:10,color:"#94a3b8",fontWeight:600}}>Concordancia IA prom.</div></Card>
+    </div>}
     <Card>
       <div style={{fontSize:13,fontWeight:700,color:"#0066B3",marginBottom:14}}>Distribución de diagnósticos</div>
       {Object.entries(counts).sort(([,a],[,b])=>b-a).map(([d,c])=>{const pct=Math.round((c/n)*100),col=diagColor(d,pct>50?80:40);return(
@@ -1724,10 +2066,10 @@ export default function App(){
   const[user,setUser]=useState(null);const[activeTab,setActiveTab]=useState("analysis");
   const{toasts,add:addToast,remove}=useToast();const width=useWindowSize();const isMobile=width<880;const toast={add:addToast};
   useEffect(()=>{loadFirebase();},[]);
-  function handleLogin(u){setUser(u);if(u.role==="masterAdmin"||u.role==="clinicAdmin")setActiveTab("admin");else{const first=["analysis","portal","stats","training","admin"].find(t=>u.permissions?.[t]);setActiveTab(first||"analysis");}}
+  function handleLogin(u){setUser(u);if(u.role==="masterAdmin"||u.role==="clinicAdmin")setActiveTab("admin");else{const first=["analysis","icsi","portal","stats","training","admin"].find(t=>u.permissions?.[t]);setActiveTab(first||"analysis");}}
   function handleLogout(){setUser(null);setActiveTab("analysis");}
   if(!user)return(<><Toast toasts={toasts} remove={remove}/><LoginScreen onLogin={handleLogin}/></>);
-  const ALL_TABS=[{id:"analysis",label:"Análisis",icon:"🔬"},{id:"portal",label:"Portal",icon:"📋"},{id:"stats",label:"Estadísticas",icon:"📊"},{id:"training",label:"Entrenamiento",icon:"🧬"},{id:"admin",label:"Admin",icon:"⚙️"}];
+  const ALL_TABS=[{id:"analysis",label:"Análisis",icon:"🔬"},{id:"icsi",label:"Selección ICSI",icon:"🎯"},{id:"portal",label:"Portal",icon:"📋"},{id:"stats",label:"Estadísticas",icon:"📊"},{id:"training",label:"Entrenamiento",icon:"🧬"},{id:"admin",label:"Admin",icon:"⚙️"}];
   const vis=ALL_TABS.filter(t=>user.role==="masterAdmin"||user.role==="clinicAdmin"||user.permissions?.[t.id]);
   const roleBg=user.role==="masterAdmin"?"linear-gradient(135deg,#1e293b,#0f172a)":user.role==="clinicAdmin"?"linear-gradient(135deg,#0066B3,#0097A7)":"linear-gradient(135deg,#0066B3,#0080D6)";
   const roleLabel=user.role==="masterAdmin"?"Master Admin":user.role==="clinicAdmin"?"Clinic Admin":"Usuario";
@@ -1759,6 +2101,7 @@ export default function App(){
     </div>}
     <main style={{flex:1,maxWidth:1280,margin:"0 auto",width:"100%",padding:isMobile?"0.75rem":"1.5rem"}}>
       {activeTab==="analysis"&&<AnalysisTab user={user} toast={toast}/>}
+      {activeTab==="icsi"&&<IcsiTab user={user} toast={toast}/>}
       {activeTab==="portal"&&<PortalTab user={user} toast={toast}/>}
       {activeTab==="stats"&&<StatsTab user={user} toast={toast}/>}
       {activeTab==="training"&&<TrainingTab user={user} toast={toast}/>}
